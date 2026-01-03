@@ -1,0 +1,28 @@
+{
+  "stage_names": {
+    "17579165": "New",
+    "presentationscheduled": "Qualification",
+    "contractsent": "Cover Buying Center",
+    "16932892": "Proposal",
+    "decisionmakerboughtin": "Short Listed",
+    "16932894": "Selected",
+    "16932893": "Negotiation",
+    "closedwon": "Gewonnen",
+    "closedlost": "Verloren",
+    "16932891": "Kein Angebot"
+  },
+  "pipeline_order": [
+    "17579165",
+    "presentationscheduled",
+    "contractsent",
+    "16932892",
+    "decisionmakerboughtin",
+    "16932894",
+    "16932893",
+    "closedwon",
+    "closedlost",
+    "16932891"
+  ],
+  "won_stages": ["closedwon"],
+  "lost_stages": ["closedlost", "16932891"]
+}
