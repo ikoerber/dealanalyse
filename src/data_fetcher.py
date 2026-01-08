@@ -23,6 +23,15 @@ class DealSnapshot:
     create_date: str
     has_history: bool
     fetch_timestamp: str
+    hs_forecast_amount: str = ''
+    hs_forecast_probability: str = ''
+    hubspot_owner_id: str = ''
+    notes_last_contacted: str = ''
+    notes_last_updated: str = ''
+    num_notes: str = ''
+    hs_lastmodifieddate: str = ''
+    hs_num_associated_queue_tasks: str = ''
+    num_associated_contacts: str = ''
 
 
 @dataclass
@@ -124,7 +133,16 @@ class DataFetcher:
             current_closedate=properties.get('closedate', ''),
             create_date=self._parse_timestamp(properties.get('createdate', '')),
             has_history=has_history,
-            fetch_timestamp=fetch_timestamp
+            fetch_timestamp=fetch_timestamp,
+            hs_forecast_amount=properties.get('hs_forecast_amount', ''),
+            hs_forecast_probability=properties.get('hs_forecast_probability', ''),
+            hubspot_owner_id=properties.get('hubspot_owner_id', ''),
+            notes_last_contacted=self._parse_timestamp(properties.get('notes_last_contacted', '')),
+            notes_last_updated=self._parse_timestamp(properties.get('notes_last_updated', '')),
+            num_notes=properties.get('num_notes', '0'),
+            hs_lastmodifieddate=self._parse_timestamp(properties.get('hs_lastmodifieddate', '')),
+            hs_num_associated_queue_tasks=properties.get('hs_num_associated_queue_tasks', '0'),
+            num_associated_contacts=properties.get('num_associated_contacts', '0')
         )
 
     def _extract_history_records(
@@ -149,7 +167,7 @@ class DataFetcher:
         properties_with_history = history_data.get('propertiesWithHistory', {})
 
         # Process each property that has history
-        for property_name in ['dealstage', 'amount', 'closedate']:
+        for property_name in ['dealstage', 'amount', 'closedate', 'hs_projected_amount', 'hs_deal_stage_probability']:
             if property_name not in properties_with_history:
                 continue
 

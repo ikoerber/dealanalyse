@@ -68,7 +68,16 @@ class CSVWriter:
             'current_closedate',
             'create_date',
             'has_history',
-            'fetch_timestamp'
+            'fetch_timestamp',
+            'hs_forecast_amount',
+            'hs_forecast_probability',
+            'hubspot_owner_id',
+            'notes_last_contacted',
+            'notes_last_updated',
+            'num_notes',
+            'hs_lastmodifieddate',
+            'hs_num_associated_queue_tasks',
+            'num_associated_contacts'
         ]
 
         # Ensure all columns exist (in case some are missing)

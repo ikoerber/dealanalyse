@@ -142,6 +142,18 @@ def main():
 
         logger.info(f"Data fetch complete: {stats}")
 
+        # Fetch owners mapping (optional - requires crm.objects.owners.read scope)
+        print("Fetching HubSpot owners...")
+        logger.info("Fetching HubSpot owners")
+        try:
+            owners_map = client.get_owners()
+            logger.info(f"Fetched {len(owners_map)} owners")
+        except Exception as e:
+            logger.warning(f"Could not fetch owners (missing scope?): {e}")
+            print(f"⚠️  Warning: Could not fetch owners. Owner names will show as 'Unbekannt'.")
+            print("    To enable: Add 'crm.objects.owners.read' scope to your HubSpot Private App.")
+            owners_map = {}
+
         # Write CSV files
         print("Writing CSV files...")
         logger.info("Writing CSV files")
@@ -149,6 +161,14 @@ def main():
         snapshot_file = writer.write_snapshot_csv(snapshots)
         history_file = writer.write_history_csv(history_records)
         quality_file = writer.write_data_quality_report(snapshots)
+
+        # Write owners mapping to JSON file
+        import json
+        owners_timestamp = datetime.now().strftime('%Y-%m-%d')
+        owners_file = f"{config.output_dir}/owners_{owners_timestamp}.json"
+        with open(owners_file, 'w', encoding='utf-8') as f:
+            json.dump(owners_map, f, ensure_ascii=False, indent=2)
+        logger.info(f"Owners mapping written to: {owners_file}")
 
         # Clear checkpoint on successful completion
         fetcher.clear_checkpoint()

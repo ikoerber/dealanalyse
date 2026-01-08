@@ -56,6 +56,26 @@ class ReportWriter:
             logger.warning(f"Could not parse amount: {amount_str}")
             return None
 
+    def _format_amount(self, amount_str: Optional[str]) -> str:
+        """
+        Format amount as Euro value with thousand separators
+
+        Args:
+            amount_str: Amount string (e.g. "50000")
+
+        Returns:
+            Formatted string like "50.000 €" or "-"
+        """
+        if not amount_str or amount_str == '-':
+            return "-"
+
+        amount = self._parse_amount(amount_str)
+        if amount is None:
+            return "-"
+
+        # Format with thousand separator (German style: dot as thousand separator)
+        return f"{amount:,.0f} €".replace(',', '.')
+
     def _format_amount_change(
         self,
         amount_start: Optional[float],
@@ -172,8 +192,8 @@ class ReportWriter:
             records.append({
                 'Monat': MONTH_NAMES[kpi.month],
                 'Jahr': kpi.year,
-                'Pipeline Neu (€)': kpi.pipeline_new_eur,
-                'Revenue Won (€)': kpi.revenue_won_eur,
+                'Pipeline Neu (€)': self._format_amount(str(kpi.pipeline_new_eur) if kpi.pipeline_new_eur else None),
+                'Revenue Won (€)': self._format_amount(str(kpi.revenue_won_eur) if kpi.revenue_won_eur else None),
                 'Win Rate (%)': kpi.win_rate_percent,
                 'Deals Erstellt': kpi.deals_created,
                 'Deals Gewonnen': kpi.deals_won,
@@ -258,8 +278,8 @@ class ReportWriter:
                     'Status (Monatsende)': state_end_name,
                     'Bewegungstyp': movement.movement_type,
                     # Amount changes
-                    'Wert Monatsanfang (€)': movement.amount_start or '-',
-                    'Wert Monatsende (€)': movement.amount_end or '-',
+                    'Wert Monatsanfang (€)': self._format_amount(movement.amount_start),
+                    'Wert Monatsende (€)': self._format_amount(movement.amount_end),
                     'Wertänderung (€)': amount_change_formatted,
                     # Closedate changes
                     'Zieldatum Anfang': self._format_date(movement.closedate_start),

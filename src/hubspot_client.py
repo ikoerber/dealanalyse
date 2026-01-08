@@ -172,7 +172,16 @@ class HubSpotClient:
                 "dealstage",
                 "closedate",
                 "createdate",
-                "hs_object_id"
+                "hs_object_id",
+                "hs_forecast_amount",
+                "hs_forecast_probability",
+                "hubspot_owner_id",
+                "notes_last_contacted",
+                "notes_last_updated",
+                "num_notes",
+                "hs_lastmodifieddate",
+                "hs_num_associated_queue_tasks",
+                "num_associated_contacts"
             ],
             "limit": limit
         }
@@ -204,7 +213,7 @@ class HubSpotClient:
         """
         endpoint = f"/crm/v3/objects/deals/{deal_id}"
         params = {
-            "propertiesWithHistory": "dealstage,amount,closedate"
+            "propertiesWithHistory": "dealstage,amount,closedate,hs_projected_amount,hs_deal_stage_probability"
         }
 
         logger.debug(f"Fetching history for deal {deal_id}")
@@ -253,3 +262,53 @@ class HubSpotClient:
         return {
             'total_api_calls': self.api_call_count
         }
+
+    @retry(
+        stop=stop_after_attempt(3),
+        wait=wait_exponential(multiplier=1, min=4, max=10),
+        retry=retry_if_exception_type((HubSpotRateLimitError, requests.exceptions.RequestException)),
+        before_sleep=before_sleep_log(logger, logging.WARNING)
+    )
+    def get_owners(self) -> Dict[str, str]:
+        """
+        Fetch all HubSpot owners and return a mapping of owner ID to owner name
+
+        Returns:
+            Dict mapping owner ID (str) to owner name (str)
+        """
+        self._rate_limit()
+
+        url = f"{self.base_url}/crm/v3/owners/"
+        logger.info(f"Fetching owners from: {url}")
+
+        response = requests.get(url, headers=self.headers, timeout=30)
+        self.api_call_count += 1
+
+        if response.status_code == 429:
+            raise HubSpotRateLimitError("Rate limit exceeded")
+        elif response.status_code == 401:
+            raise HubSpotAuthenticationError("Authentication failed - check your API key")
+        elif response.status_code != 200:
+            raise HubSpotAPIError(f"API request failed with status {response.status_code}: {response.text}")
+
+        data = response.json()
+        owners = data.get('results', [])
+
+        # Create mapping of owner ID to full name
+        owner_map = {}
+        for owner in owners:
+            owner_id = str(owner.get('id', ''))
+            first_name = owner.get('firstName', '')
+            last_name = owner.get('lastName', '')
+            email = owner.get('email', '')
+
+            # Use full name if available, otherwise email
+            if first_name or last_name:
+                full_name = f"{first_name} {last_name}".strip()
+            else:
+                full_name = email
+
+            owner_map[owner_id] = full_name
+
+        logger.info(f"Fetched {len(owner_map)} owners")
+        return owner_map
