@@ -8,9 +8,9 @@ from glob import glob
 import os
 
 # HubSpot Configuration
-# TODO: Replace with your actual HubSpot Portal ID
+# Set HUBSPOT_PORTAL_ID in .env or environment
 # You can find it in HubSpot: Settings > Account Setup > Account Defaults
-HUBSPOT_PORTAL_ID = "19645216"  # Replace with your Portal ID
+HUBSPOT_PORTAL_ID = os.getenv("HUBSPOT_PORTAL_ID", "19645216")
 
 # Page Config
 st.set_page_config(
@@ -248,21 +248,9 @@ def merge_months(month_a_df, month_b_df, month_a_name, month_b_name, snapshot_df
         return 'Unbekannt'
 
     # ALWAYS create these columns, even if snapshot_df wasn't merged
-    import streamlit as st
     if 'Owner_ID' in merged.columns:
-        # DEBUG: Show what's happening
-        st.sidebar.write("🔍 DEBUG in merge_months:")
-        st.sidebar.write(f"  - Owner_ID column exists: True")
-        st.sidebar.write(f"  - owners_map: {len(owners_map) if owners_map else 0} entries")
-        # Test first row
-        first_owner_id = merged.iloc[0]['Owner_ID'] if len(merged) > 0 else None
-        if first_owner_id:
-            st.sidebar.write(f"  - First deal Owner_ID: {first_owner_id}")
-            st.sidebar.write(f"  - Result: {get_owner_name(first_owner_id)}")
-
         merged['Owner_Name'] = merged['Owner_ID'].apply(get_owner_name)
     else:
-        st.sidebar.write("❌ Owner_ID column NOT in merged!")
         merged['Owner_Name'] = 'Unbekannt'
 
     # Calculate last activity date (most recent of last_contacted, last_updated, last_modified)
