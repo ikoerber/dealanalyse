@@ -1,168 +1,97 @@
-HubSpot Deal Reporting Service (AR Report)
-Dieses Dokument beschreibt die Anforderungen und die technische Umsetzung für einen automatisierten Sales-Report. Ziel ist es, monatliche Kennzahlen (Revenue, Pipeline Growth, Conversion) sowie konkrete Veränderungen einzelner Deals aus HubSpot zu extrahieren, um dem Aufsichtsrat (AR) die Performance und Dynamik des Sales-Teams darzustellen.
+# CLAUDE.md
 
-📋 Inhaltsverzeichnis
-Business Case & Zielsetzung
+This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
-Technische Voraussetzungen
+## Project Overview
 
-API Endpunkte & Datenabruf
+HubSpot Deal Reporting Service for board (Aufsichtsrat) reports. Fetches deal data from HubSpot CRM API v3, analyzes monthly deal movements, and generates KPI reports with an interactive Streamlit dashboard.
 
-Logik der Daten-Aggregation (Monthly Buckets)
+## Commands
 
-Feature: Deal Movement & Slippage (Veränderungsanalyse)
+```bash
+# Setup
+python3 -m venv venv
+source venv/bin/activate
+pip install -r requirements.txt
 
-Output Format
+# Full pipeline: Fetch + Analyze + PDF generation
+python generate_report.py
 
-Business Case & Zielsetzung
-Der AR benötigt einen monatlichen Bericht ("Month-over-Month"), der folgende Fragen beantwortet:
+# Pipeline options
+python generate_report.py --skip-fetch              # Use existing data
+python generate_report.py --skip-analysis           # Use existing reports
+python generate_report.py --months "Dezember 2025" "Januar 2026"  # Specific months
 
-KPIs: Umsatz, Pipeline-Wachstum und Win-Rates pro Monat.
+# Individual steps (if needed)
+python fetch_deals.py                               # Fetch from HubSpot
+python analyze_deals.py                             # Generate analysis CSVs
+streamlit run dashboard_monthly.py                  # Interactive dashboard
+```
 
-Deal-Tracking: Was ist konkret aus Deals geworden, die im Vormonat noch in der Pipeline waren? (Wurden sie gewonnen, verloren oder verschoben?)
+## Architecture
 
-Transparenz: Identifikation von "Leichen" im CRM (Deals, die sich nicht bewegen).
+### Data Flow
+1. `fetch_deals.py` → HubSpot API → `output/deals_snapshot_*.csv` + `output/deal_history_*.csv`
+2. `analyze_deals.py` → Reads CSVs → Generates `kpi_overview.csv` + `deal_movements_detail.csv`
+3. `generate_report.py` → Runs 1+2 + Generates PDF comparison report
+4. `dashboard_monthly.py` → Reads CSVs → Interactive Streamlit UI
 
-Das Skript soll am 1. eines jeden Monats laufen und die Daten des vergangenen Monats/Jahres analysieren.
+### Core Modules (`src/`)
 
-Technische Voraussetzungen
-API Standard: HubSpot CRM API v3
+- **hubspot_client.py**: HubSpot API v3 client with rate limiting (tenacity), handles auth, pagination, and owner lookups
+- **data_fetcher.py**: Orchestrates data retrieval, checkpointing for large datasets
+- **csv_writer.py**: CSV export with UTF-8-BOM encoding for Excel compatibility
+- **config.py**: Environment configuration via python-dotenv
 
-Auth Methode: Private App Access Token (Bearer Token)
+### Analysis Layer (`src/analysis/`)
 
-Benötigte Scopes: crm.objects.deals.read
+- **stage_mapper.py**: Maps HubSpot stage IDs to human-readable names using `config/stage_mapping.json`
+- **movement_categorizer.py**: Categorizes deals as WON, LOST, ADVANCED, STALLED, PUSHED, REGRESSED
+- **monthly_analyzer.py**: Reconstructs deal state at any point using `propertiesWithHistory`
+- **kpi_calculator.py**: Aggregates Revenue Won, Pipeline Generation, Win Rate per month
 
-API Endpunkte & Datenabruf
-1. Haupt-Abruf: Search API & Details
+### Reporting (`src/reporting/`)
 
-Wir benötigen eine Kombination aus Suche und Detail-Historie, um Veränderungen sichtbar zu machen.
+- **report_generator.py**: Coordinates analysis and report creation
+- **report_writer.py**: Writes final CSV reports
+- **pdf_generator.py**: ReportLab-based PDF export with metrics summary and color-coded deal comparison tables (landscape A4, German formatting)
 
-Endpoint: POST /crm/v3/objects/deals/search
+## Key Concepts
 
-Filter: Alle Deals, die im Berichtszeitraum (z.B. letztes Jahr bis heute) entweder erstellt wurden ODER abgeschlossen wurden ODER noch offen sind.
+### Deal Movement Logic (Snapshot Comparison)
+For each deal, compare state at month start vs. month end:
+- **WON**: Ended in `closedwon` stage
+- **LOST**: Ended in `closedlost` or `16932893` (Kein Angebot)
+- **PUSHED**: `closedate` moved to future (slippage detection)
+- **ADVANCED**: Moved forward in pipeline
+- **REGRESSED**: Moved backward in pipeline
+- **STALLED**: No stage change (warning signal)
 
-Request Body
+### Stage Configuration
+Pipeline stages are defined in `config/stage_mapping.json`:
+- `stage_names`: ID → display name mapping
+- `pipeline_order`: Stage sequence for comparison
+- `won_stages`/`lost_stages`: Terminal stage arrays
 
-JSON
-{
-  "filterGroups": [
-    {
-       "filters": [
-         { "propertyName": "createdate", "operator": "GTE", "value": "1735689600000" } // Ab 01.01.2025
-       ]
-    }
-    // Weitere Filterlogik um auch offene alte Deals zu erfassen
-  ],
-  "properties": [
-    "dealname", "amount", "dealstage", "closedate", "createdate", "hs_object_id"
-  ]
-}
-2. Historien-Abruf (Crucial für AR-Fragen)
+## Configuration
 
-Um zu beantworten "Was war letzten Monat?", müssen wir für die relevanten Deals die Historie abrufen.
+Required in `.env`:
+```
+HUBSPOT_ACCESS_TOKEN=pat-na1-...
+```
 
-Endpoint: GET /crm/v3/objects/deals/{dealId}?propertiesWithHistory=dealstage,amount,closedate
+Optional:
+```
+HUBSPOT_BASE_URL=https://api.hubapi.com
+START_DATE=2025-01-01
+RATE_LIMIT_DELAY=0.11
+```
 
-Logik: Iteriere über die Liste der Deals und rufe diesen Endpunkt auf (Batch-Anfragen nutzen, falls möglich, oder Rate-Limiting beachten).
+Dashboard requires `HUBSPOT_PORTAL_ID` in `dashboard_monthly.py` (line 13) for clickable deal links.
 
-Logik der Daten-Aggregation (Monthly Buckets)
-Aggregation der KPI-Zahlen für die High-Level-Übersicht:
+## API Notes
 
-Revenue (Won): Summe amount aller Deals mit dealstage == closedwon im jeweiligen Monat.
-
-Pipeline Generation: Summe amount aller Deals mit createdate im jeweiligen Monat.
-
-Win Rate: (Won Deals / Total Created Deals) * 100.
-
-Feature: Deal Movement & Slippage (Veränderungsanalyse)
-Dieser Teil ist essenziell, um die Frage "Was ist aus Deal XYZ geworden?" zu beantworten.
-
-Die Logik ("Snapshot-Vergleich")
-
-Das Skript muss für jeden Deal prüfen, wo er sich am Ersten des Monats befand und wo er sich am Letzten des Monats befand.
-
-Algorithmus:
-
-Definiere Berichtsmonat (z.B. Februar).
-
-Prüfe die propertiesWithHistory für dealstage:
-
-Status Start: Welchen Wert hatte dealstage am 01.02. um 00:00 Uhr?
-
-Status Ende: Welchen Wert hatte dealstage am 28.02. um 23:59 Uhr?
-
-Kategorisiere die Bewegung:
-
-WON: Status Start != Won -> Status Ende == Won.
-
-LOST: Status Start != Lost -> Status Ende == Lost.
-
-ADVANCED: Deal ist eine Phase weitergerutscht (z.B. "Qualifikation" -> "Angebot").
-
-STALLED: Status Start == Status Ende (Deal hat sich den ganzen Monat nicht bewegt -> Warnsignal für AR!).
-
-PUSHED: Prüfe propertiesWithHistory für closedate. Hat sich das geplante Abschlussdatum im Laufe des Monats in die Zukunft verschoben?
-
-Output Format
-Das System generiert zwei CSV-Dateien sowie ein interaktives Streamlit Dashboard.
-
-Datei 1: kpi_overview.csv (Management Summary)
-
-Monat	Jahr	Pipeline Neu (€)	Revenue Won (€)	Win Rate (%)
-Januar	2025	500.000	120.000	24%
-...	...	...	...	...
-
-Datei 2: deal_movements_detail.csv (Erweiterte Operative Analyse)
-
-Diese Liste erklärt die Details hinter den Zahlen mit erweiterten Spalten:
-
-Spalten:
-- Deal ID, Deal Name
-- Monat, Jahr
-- Status (Monatsanfang), Status (Monatsende)
-- Bewegungstyp (WON, LOST, ADVANCED, STALLED, etc.)
-- Wert Monatsanfang (€), Wert Monatsende (€)
-- Wertänderung (€), Wertänderung (%)
-- Zieldatum Anfang, Zieldatum Ende
-- Tage verschoben
-- Tage in aktueller Phase
-- Kommentar
-
-Interaktives Dashboard
-Das Streamlit Dashboard (dashboard_monthly.py) bietet eine Excel-ähnliche Side-by-Side Ansicht:
-
-Features:
-1. **Monatsvergleich**: Zwei beliebige Monate nebeneinander vergleichen
-2. **Chronologische Navigation**: Dropdown-Menüs mit chronologisch sortierten Monaten
-3. **Farbcodierung**:
-   - 🟢 Grün: Gewonnene Deals
-   - 🔴 Rot: Verlorene Deals
-   - 🔵 Blau: Phase-Änderungen
-4. **HubSpot Integration**: Klickbare Links zu Deals direkt in HubSpot
-5. **Vollständiger Zustand**: Zeigt ALLE aktiven Deals, nicht nur jene mit Änderungen
-6. **Statistiken**: Anzahl Gesamt, Gewonnen, Verloren, Neu
-7. **CSV Export**: Download der Vergleichsdaten
-
-Ausführung:
-
-# 1. Daten abrufen und analysieren
-python analyze_deals.py
-
-# 2. Dashboard starten
-streamlit run dashboard_monthly.py
-
-Konfiguration:
-- HubSpot Portal ID in dashboard_monthly.py anpassen (Zeile 13)
-- API Token in .env Datei hinterlegen
-
-Definition of Done
-
-[x] KPI-Berechnung (Aggregation) korrekt implementiert
-[x] Historien-Abruf (propertiesWithHistory) für Deals implementiert
-[x] Logik zur Erkennung von Status-Änderungen funktioniert
-[x] Erkennung von verschobenen Abschlussdaten (closedate changes)
-[x] Export beider CSV-Dateien mit erweiterten Spalten
-[x] Interaktives Streamlit Dashboard mit Side-by-Side Vergleich
-[x] HubSpot-Integration mit klickbaren Links
-[x] Chronologische Sortierung und Navigation
-[x] Vollständige Zustandsrekonstruktion für alle aktiven Deals
+- HubSpot Search API: `POST /crm/v3/objects/deals/search`
+- History API: `GET /crm/v3/objects/deals/{id}?propertiesWithHistory=dealstage,amount,closedate`
+- Rate limit: 100 requests/10 seconds (configured 110ms delay)
+- Checkpoint system saves progress every 100 deals in `output/.checkpoint_deals.json`

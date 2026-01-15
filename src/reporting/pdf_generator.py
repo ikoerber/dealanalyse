@@ -462,6 +462,14 @@ class PDFGenerator:
                         # Use Paragraph for Deal Name to allow word wrap
                         text = str(value) if pd.notna(value) else '-'
                         formatted_row.append(Paragraph(text, self.styles['TableCell']))
+                    elif col == 'Status':
+                        # Use Paragraph for Status to allow word wrap
+                        text = str(value) if pd.notna(value) else '-'
+                        formatted_row.append(Paragraph(text, self.styles['TableCell']))
+                    elif 'Phase' in col:
+                        # Use Paragraph for Phase columns to allow word wrap
+                        text = str(value) if pd.notna(value) else '-'
+                        formatted_row.append(Paragraph(text, self.styles['TableCell']))
                     elif col == 'Wert' or 'Gewichtet' in col:
                         # Amounts - plain string, alignment via TableStyle
                         formatted_row.append(format_euro(value) if pd.notna(value) else '-')
@@ -556,7 +564,7 @@ class PDFGenerator:
         widths = []
         for col in columns:
             if col == 'Deal Name':
-                widths.append(62*mm)  # Wider for text wrapping
+                widths.append(54*mm)  # Wider for text wrapping
             elif col == 'Vtw':
                 widths.append(10*mm)  # Initials only (2 chars)
             elif col == 'Wert':
@@ -564,13 +572,13 @@ class PDFGenerator:
             elif col == 'Alter':
                 widths.append(12*mm)
             elif 'Phase' in col:
-                widths.append(22*mm)
+                widths.append(26*mm)  # Wider for text wrapping
             elif col.startswith('%'):
                 widths.append(14*mm)
             elif 'Gewichtet' in col:
                 widths.append(22*mm)
             elif col == 'Status':
-                widths.append(35*mm)
+                widths.append(40*mm)  # Wider for text wrapping
             else:
                 widths.append(18*mm)  # Default
 
