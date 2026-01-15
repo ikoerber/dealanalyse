@@ -312,3 +312,140 @@ class HubSpotClient:
 
         logger.info(f"Fetched {len(owner_map)} owners")
         return owner_map
+
+    def search_contacts(
+        self,
+        limit: int = 100,
+        after: Optional[str] = None
+    ) -> Dict:
+        """
+        Search for contacts using HubSpot Search API
+
+        Args:
+            limit: Number of results per page (max 100)
+            after: Pagination cursor from previous response
+
+        Returns:
+            Dictionary with search results including contacts and pagination info
+        """
+        endpoint = "/crm/v3/objects/contacts/search"
+
+        payload = {
+            "filterGroups": [
+                {
+                    "filters": [
+                        {
+                            "propertyName": "lifecyclestage",
+                            "operator": "IN",
+                            "values": ["marketingqualifiedlead", "salesqualifiedlead"]
+                        }
+                    ]
+                }
+            ],
+            "properties": [
+                "firstname",
+                "lastname",
+                "email",
+                "lifecyclestage",
+                "hs_v2_date_entered_marketingqualifiedlead",
+                "hs_v2_date_entered_salesqualifiedlead",
+                "ursprungliche_quelle__analog_unternehmensquelle_",
+                "createdate",
+                "hs_object_id"
+            ],
+            "limit": limit
+        }
+
+        if after:
+            payload["after"] = after
+
+        logger.info(f"Searching contacts (limit={limit}, after={after})")
+
+        response = self._make_request("POST", endpoint, json=payload)
+        data = response.json()
+
+        results_count = len(data.get('results', []))
+        has_more = 'paging' in data and 'next' in data['paging']
+
+        logger.info(f"Retrieved {results_count} contacts (has_more={has_more})")
+
+        return data
+
+    def get_contact_companies(self, contact_id: str) -> List[Dict]:
+        """
+        Get companies associated with a contact via Associations API
+
+        Args:
+            contact_id: HubSpot contact ID
+
+        Returns:
+            List of company dictionaries with association type info
+        """
+        endpoint = f"/crm/v3/objects/contacts/{contact_id}/associations/companies"
+
+        logger.debug(f"Fetching companies for contact {contact_id}")
+
+        response = self._make_request("GET", endpoint)
+
+        if response.status_code == 404:
+            logger.debug(f"No companies found for contact {contact_id}")
+            return []
+
+        data = response.json()
+        return data.get('results', [])
+
+    def get_company_by_id(self, company_id: str) -> Optional[Dict]:
+        """
+        Get company details by ID
+
+        Args:
+            company_id: HubSpot company ID
+
+        Returns:
+            Company dictionary or None if not found
+        """
+        endpoint = f"/crm/v3/objects/companies/{company_id}"
+        params = {
+            "properties": "name"
+        }
+
+        logger.debug(f"Fetching company {company_id}")
+
+        response = self._make_request("GET", endpoint, params=params)
+
+        if response.status_code == 404:
+            logger.debug(f"Company {company_id} not found")
+            return None
+
+        data = response.json()
+        return data
+
+    def get_all_contacts(self) -> List[Dict]:
+        """
+        Fetch all contacts matching the search criteria (handles pagination)
+
+        Returns:
+            List of all contact dictionaries
+        """
+        all_contacts = []
+        after = None
+        page = 1
+
+        while True:
+            logger.info(f"Fetching contacts page {page}")
+
+            result = self.search_contacts(limit=100, after=after)
+
+            contacts = result.get('results', [])
+            all_contacts.extend(contacts)
+
+            # Check if there are more pages
+            paging = result.get('paging', {})
+            if 'next' in paging:
+                after = paging['next'].get('after')
+                page += 1
+            else:
+                break
+
+        logger.info(f"Fetched total of {len(all_contacts)} contacts across {page} page(s)")
+        return all_contacts

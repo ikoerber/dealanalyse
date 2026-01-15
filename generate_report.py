@@ -81,6 +81,89 @@ def run_analysis():
     return True
 
 
+def run_fetch_contacts():
+    """Run fetch_contacts.py to get contact data from HubSpot"""
+    print("\n" + "=" * 60)
+    print("SCHRITT 1b: Contact-Daten von HubSpot abrufen")
+    print("=" * 60 + "\n")
+
+    result = subprocess.run(
+        [sys.executable, "fetch_contacts.py"],
+        capture_output=False
+    )
+
+    if result.returncode != 0:
+        logging.error("fetch_contacts.py fehlgeschlagen")
+        return False
+
+    return True
+
+
+def run_analysis_contacts():
+    """Run analyze_contacts.py to generate contact funnel reports"""
+    print("\n" + "=" * 60)
+    print("SCHRITT 2b: Contact-Analyse durchführen")
+    print("=" * 60 + "\n")
+
+    result = subprocess.run(
+        [sys.executable, "analyze_contacts.py"],
+        capture_output=False
+    )
+
+    if result.returncode != 0:
+        logging.error("analyze_contacts.py fehlgeschlagen")
+        return False
+
+    return True
+
+
+def load_contact_data():
+    """Load latest contact analysis reports"""
+    try:
+        # Find latest contact KPI file
+        kpi_pattern = "output/reports/contacts_kpi_*.csv"
+        kpi_files = glob(kpi_pattern)
+        if not kpi_files:
+            logging.warning(f"Keine Contact-KPI-Daten gefunden: {kpi_pattern}")
+            return None
+
+        latest_kpi = max(kpi_files, key=os.path.getmtime)
+        kpis_df = pd.read_csv(latest_kpi, encoding='utf-8-sig')
+        logging.info(f"Lade Contact-KPIs: {latest_kpi}")
+
+        # Find latest SQL details file
+        sql_pattern = "output/reports/sql_details_*.csv"
+        sql_files = glob(sql_pattern)
+        if not sql_files:
+            logging.warning(f"Keine SQL-Details gefunden: {sql_pattern}")
+            sql_details_df = pd.DataFrame()
+        else:
+            latest_sql = max(sql_files, key=os.path.getmtime)
+            sql_details_df = pd.read_csv(latest_sql, encoding='utf-8-sig')
+            logging.info(f"Lade SQL-Details: {latest_sql}")
+
+        # Find latest source breakdown file
+        source_pattern = "output/reports/source_breakdown_*.csv"
+        source_files = glob(source_pattern)
+        if not source_files:
+            logging.warning(f"Keine Quellen-Übersicht gefunden: {source_pattern}")
+            source_breakdown_df = pd.DataFrame()
+        else:
+            latest_source = max(source_files, key=os.path.getmtime)
+            source_breakdown_df = pd.read_csv(latest_source, encoding='utf-8-sig')
+            logging.info(f"Lade Quellen-Übersicht: {latest_source}")
+
+        return {
+            'kpis': kpis_df,
+            'sql_details': sql_details_df,
+            'source_breakdown': source_breakdown_df
+        }
+
+    except Exception as e:
+        logging.error(f"Fehler beim Laden der Contact-Daten: {e}")
+        return None
+
+
 def load_movement_data():
     """Load the latest deal movements CSV"""
     pattern = "output/reports/deal_movements_detail_*.csv"
@@ -397,7 +480,7 @@ def calculate_metrics(comparison_df):
     return metrics
 
 
-def generate_pdf(comparison_df, month_a, month_b, metrics):
+def generate_pdf(comparison_df, month_a, month_b, metrics, contact_data=None):
     """Generate PDF report"""
     print("\n" + "=" * 60)
     print("SCHRITT 3: PDF-Report generieren")
@@ -422,7 +505,8 @@ def generate_pdf(comparison_df, month_a, month_b, metrics):
         month_a=month_a,
         month_b=month_b,
         metrics=metrics,
-        output_path=output_path
+        output_path=output_path,
+        contact_data=contact_data
     )
 
     logging.info(f"PDF generiert: {pdf_path}")
@@ -534,8 +618,51 @@ Beispiele:
 
         metrics = calculate_metrics(comparison)
 
+        # Contact Pipeline (with error handling)
+        contact_data = None
+        try:
+            logging.info("Starte Contact-Pipeline")
+
+            # Step 1b: Fetch contacts
+            if not args.skip_fetch:
+                if not run_fetch_contacts():
+                    print("\n⚠️  WARNUNG: Contact-Abruf fehlgeschlagen")
+                    print("   → PDF wird ohne Contact-Sektion generiert\n")
+                    logging.warning("Contact-Abruf fehlgeschlagen - fahre ohne Contact-Daten fort")
+                else:
+                    # Step 2b: Analyze contacts
+                    if not args.skip_analysis:
+                        if not run_analysis_contacts():
+                            print("\n⚠️  WARNUNG: Contact-Analyse fehlgeschlagen")
+                            print("   → PDF wird ohne Contact-Sektion generiert\n")
+                            logging.warning("Contact-Analyse fehlgeschlagen - fahre ohne Contact-Daten fort")
+                        else:
+                            # Load contact data
+                            contact_data = load_contact_data()
+                            if contact_data:
+                                logging.info("Contact-Daten erfolgreich geladen")
+                            else:
+                                print("\n⚠️  WARNUNG: Contact-Daten konnten nicht geladen werden")
+                                print("   → PDF wird ohne Contact-Sektion generiert\n")
+                    else:
+                        # Analysis skipped, try to load existing data
+                        contact_data = load_contact_data()
+                        if contact_data:
+                            logging.info("Vorhandene Contact-Daten geladen")
+            else:
+                # Fetch skipped, try to load existing data
+                contact_data = load_contact_data()
+                if contact_data:
+                    logging.info("Vorhandene Contact-Daten geladen")
+
+        except Exception as e:
+            logging.error(f"Contact-Pipeline fehlgeschlagen: {e}")
+            print(f"\n⚠️  WARNUNG: Contact-Pipeline fehlgeschlagen: {e}")
+            print("   → PDF wird ohne Contact-Sektion generiert\n")
+            contact_data = None
+
         # Generate PDF
-        pdf_path = generate_pdf(comparison, month_a, month_b, metrics)
+        pdf_path = generate_pdf(comparison, month_a, month_b, metrics, contact_data=contact_data)
 
         # Summary
         print("\n" + "=" * 60)

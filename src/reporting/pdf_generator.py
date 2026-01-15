@@ -131,7 +131,8 @@ class PDFGenerator:
         month_a: str,
         month_b: str,
         metrics: dict,
-        output_path: str
+        output_path: str,
+        contact_data: Optional[dict] = None
     ) -> str:
         """
         Generate complete PDF report with metrics and comparison table.
@@ -142,6 +143,8 @@ class PDFGenerator:
             month_b: Second month name (e.g., "Februar 2026")
             metrics: Dictionary with calculated metrics
             output_path: Path where PDF should be saved
+            contact_data: Optional dictionary with contact analysis data
+                         {'kpis': DataFrame, 'sql_details': DataFrame, 'source_breakdown': DataFrame}
 
         Returns:
             Path to the generated PDF file
@@ -170,6 +173,12 @@ class PDFGenerator:
         # Page 2+: Detailed Comparison Table
         story.append(PageBreak())
         story.extend(self._create_comparison_table(comparison_df, month_a, month_b))
+
+        # Page N+1: Contact Report Section (if data provided)
+        if contact_data:
+            logger.info("Adding contact report section to PDF")
+            story.append(PageBreak())
+            story.extend(self._create_contact_report_section(contact_data))
 
         # Build PDF
         doc.build(
@@ -590,6 +599,185 @@ class PDFGenerator:
             widths = [w * scale_factor for w in widths]
 
         return widths
+
+    def _create_contact_report_section(self, contact_data: dict) -> List:
+        """
+        Create contact/lead analysis section for PDF
+
+        Args:
+            contact_data: Dictionary with 'kpis', 'sql_details', 'source_breakdown' DataFrames
+
+        Returns:
+            List of Flowables for PDF
+        """
+        elements = []
+
+        kpis_df = contact_data.get('kpis')
+        sql_details_df = contact_data.get('sql_details')
+        source_breakdown_df = contact_data.get('source_breakdown')
+
+        # Page N+1: KPI Overview (12 months)
+        if kpis_df is not None and not kpis_df.empty:
+            title = Paragraph("Lead Funnel - KPI Übersicht", self.styles['SectionHeading'])
+            elements.append(title)
+            elements.append(Spacer(1, 10*mm))
+
+            # Prepare table data
+            table_data = []
+            header_row = [
+                Paragraph(col, self.styles['TableHeader'])
+                for col in kpis_df.columns
+            ]
+            table_data.append(header_row)
+
+            # Add data rows
+            for _, row in kpis_df.iterrows():
+                formatted_row = []
+                for col in kpis_df.columns:
+                    value = row[col]
+                    if pd.notna(value):
+                        # Format numbers with German locale
+                        if isinstance(value, (int, float)) and col != 'Monat':
+                            if 'Conv.Rate' in col or '%' in col:
+                                text = f"{value:.1f}%"
+                            else:
+                                text = f"{int(value):,}".replace(',', '.')
+                        else:
+                            text = str(value)
+                    else:
+                        text = '-'
+                    formatted_row.append(text)
+                table_data.append(formatted_row)
+
+            # Create table
+            col_widths = [50*mm, 25*mm, 25*mm, 30*mm, 35*mm]  # Monat, MQLs, SQLs, Conv.Rate, Ø Tage
+            table = Table(table_data, colWidths=col_widths, repeatRows=1)
+
+            # Style table
+            table.setStyle(TableStyle([
+                ('BACKGROUND', (0, 0), (-1, 0), COLORS['header']),
+                ('TEXTCOLOR', (0, 0), (-1, 0), colors.white),
+                ('ALIGN', (0, 0), (-1, 0), 'CENTER'),
+                ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
+                ('FONTSIZE', (0, 0), (-1, 0), 9),
+                ('BOTTOMPADDING', (0, 0), (-1, 0), 8),
+                ('GRID', (0, 0), (-1, -1), 0.5, colors.grey),
+                ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
+                ('ALIGN', (1, 1), (-1, -1), 'RIGHT'),  # Right-align numbers
+                ('ALIGN', (0, 1), (0, -1), 'LEFT'),     # Left-align month names
+            ]))
+
+            elements.append(table)
+            elements.append(PageBreak())
+
+        # Page N+2: SQL Details List (last month)
+        if sql_details_df is not None and not sql_details_df.empty:
+            title = Paragraph("SQL Details - Letzter abgeschlossener Monat", self.styles['SectionHeading'])
+            elements.append(title)
+            elements.append(Spacer(1, 10*mm))
+
+            # Prepare table data
+            table_data = []
+            header_row = [
+                Paragraph(col, self.styles['TableHeader'])
+                for col in sql_details_df.columns
+            ]
+            table_data.append(header_row)
+
+            # Add data rows (use Paragraph for text wrapping)
+            for _, row in sql_details_df.iterrows():
+                formatted_row = []
+                for col in sql_details_df.columns:
+                    value = row[col]
+                    text = str(value) if pd.notna(value) else '-'
+
+                    # Use Paragraph for Firma and Quelle columns (potential text wrapping)
+                    if col in ['Firma', 'Quelle']:
+                        formatted_row.append(Paragraph(text, self.styles['TableCell']))
+                    else:
+                        formatted_row.append(text)
+
+                table_data.append(formatted_row)
+
+            # Create table
+            col_widths = [25*mm, 50*mm, 70*mm, 70*mm]  # Datum, Kontakt, Firma, Quelle
+            table = Table(table_data, colWidths=col_widths, repeatRows=1)
+
+            # Style table
+            table.setStyle(TableStyle([
+                ('BACKGROUND', (0, 0), (-1, 0), COLORS['header']),
+                ('TEXTCOLOR', (0, 0), (-1, 0), colors.white),
+                ('ALIGN', (0, 0), (-1, 0), 'CENTER'),
+                ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
+                ('FONTSIZE', (0, 0), (-1, 0), 9),
+                ('BOTTOMPADDING', (0, 0), (-1, 0), 8),
+                ('GRID', (0, 0), (-1, -1), 0.5, colors.grey),
+                ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
+                ('ALIGN', (0, 1), (0, -1), 'CENTER'),  # Center-align dates
+            ]))
+
+            elements.append(table)
+            elements.append(PageBreak())
+
+        # Page N+3: Source Breakdown Matrix (12 months)
+        if source_breakdown_df is not None and not source_breakdown_df.empty:
+            title = Paragraph("Lead-Qualität nach Kanal - 12 Monate Matrix", self.styles['SectionHeading'])
+            elements.append(title)
+            elements.append(Spacer(1, 10*mm))
+
+            # Prepare table data
+            table_data = []
+            header_row = [
+                Paragraph(col.replace('\n', '<br/>'), self.styles['TableHeader'])
+                for col in source_breakdown_df.columns
+            ]
+            table_data.append(header_row)
+
+            # Add data rows
+            for _, row in source_breakdown_df.iterrows():
+                formatted_row = []
+                for idx, col in enumerate(source_breakdown_df.columns):
+                    value = row[col]
+                    text = str(value) if pd.notna(value) else '-'
+
+                    # Use Paragraph for Quelle column (first column) to allow text wrapping
+                    if idx == 0:
+                        formatted_row.append(Paragraph(text, self.styles['TableCell']))
+                    else:
+                        formatted_row.append(text)
+
+                table_data.append(formatted_row)
+
+            # Calculate column widths dynamically
+            # Quelle column: 40mm, Month columns: equal split of remaining space
+            num_cols = len(source_breakdown_df.columns)
+            available_width = 257*mm  # Landscape A4 minus margins
+            quelle_width = 40*mm
+            remaining_width = available_width - quelle_width
+            month_col_width = remaining_width / (num_cols - 1)  # -1 for Quelle column
+
+            col_widths = [quelle_width] + [month_col_width] * (num_cols - 1)
+
+            table = Table(table_data, colWidths=col_widths, repeatRows=1)
+
+            # Style table
+            table.setStyle(TableStyle([
+                ('BACKGROUND', (0, 0), (-1, 0), COLORS['header']),
+                ('TEXTCOLOR', (0, 0), (-1, 0), colors.white),
+                ('ALIGN', (0, 0), (-1, 0), 'CENTER'),
+                ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
+                ('FONTSIZE', (0, 0), (-1, 0), 7),
+                ('BOTTOMPADDING', (0, 0), (-1, 0), 6),
+                ('GRID', (0, 0), (-1, -1), 0.5, colors.grey),
+                ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
+                ('ALIGN', (1, 1), (-1, -1), 'CENTER'),  # Center-align all data cells except Quelle
+                ('ALIGN', (0, 1), (0, -1), 'LEFT'),      # Left-align Quelle column
+                ('FONTSIZE', (0, 0), (-1, -1), 6),       # Smaller font for matrix
+            ]))
+
+            elements.append(table)
+
+        return elements
 
     def _get_row_color(self, status_change: str) -> colors.Color:
         """
