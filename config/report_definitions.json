@@ -1,0 +1,213 @@
+{
+  "_schema_version": "1.0",
+  "_description": "Report definitions for HubSpot analytics. Each report type defines data source, analysis method, and output format.",
+
+  "deal_monthly_comparison": {
+    "name": "Deal Monthly Comparison Report",
+    "description": "Side-by-side comparison of pipeline state across two months",
+    "object_type": "deals",
+    "enabled": true,
+
+    "data_source": {
+      "fetcher": "src.fetchers.DealsFetcher",
+      "requires_history": true,
+      "requires_associations": ["contacts"]
+    },
+
+    "analysis": {
+      "analyzer": "src.analysis.monthly_analyzer.MonthlyAnalyzer",
+      "method": "compare_two_months",
+      "parameters": {
+        "include_movements": true,
+        "include_kpis": true
+      }
+    },
+
+    "outputs": [
+      {
+        "format": "pdf",
+        "template": "comparison_landscape",
+        "filename_pattern": "deal_comparison_{month_a}_vs_{month_b}_{date}.pdf",
+        "sections": [
+          "metrics_summary",
+          "comparison_table",
+          "closed_deals_summary"
+        ],
+        "layout": {
+          "orientation": "landscape",
+          "page_size": "A4",
+          "rows_per_page": 20
+        }
+      },
+      {
+        "format": "csv",
+        "files": [
+          "kpi_overview",
+          "deal_movements_detail"
+        ]
+      }
+    ],
+
+    "schedule": {
+      "frequency": "monthly",
+      "day_of_month": 1,
+      "recipients": ["board@example.com"]
+    }
+  },
+
+  "contact_funnel_analysis": {
+    "name": "Contact Lead Funnel Analysis",
+    "description": "MQL/SQL conversion tracking over 12 months",
+    "object_type": "contacts",
+    "enabled": true,
+
+    "data_source": {
+      "fetcher": "src.fetchers.ContactsFetcher",
+      "requires_history": false,
+      "requires_associations": ["companies"]
+    },
+
+    "analysis": {
+      "analyzer": "analyze_contacts",
+      "method": "calculate_monthly_kpis",
+      "parameters": {
+        "months_lookback": 12,
+        "include_source_breakdown": true
+      }
+    },
+
+    "outputs": [
+      {
+        "format": "pdf",
+        "template": "funnel_portrait",
+        "filename_pattern": "contact_funnel_{date}.pdf",
+        "sections": [
+          "kpi_overview",
+          "sql_details_last_month",
+          "source_breakdown_matrix"
+        ],
+        "layout": {
+          "orientation": "portrait",
+          "page_size": "A4"
+        }
+      },
+      {
+        "format": "csv",
+        "files": [
+          "contacts_kpi",
+          "sql_details",
+          "source_breakdown"
+        ]
+      }
+    ],
+
+    "schedule": {
+      "frequency": "monthly",
+      "day_of_month": 5,
+      "recipients": ["marketing@example.com"]
+    }
+  },
+
+  "deals_2025_overview": {
+    "name": "2025 Deals Overview",
+    "description": "Complete list of all deals created in 2025 with source and rejection reasons",
+    "object_type": "deals",
+    "enabled": true,
+
+    "data_source": {
+      "fetcher": "src.fetchers.DealsFetcher",
+      "requires_history": false,
+      "requires_associations": ["contacts"]
+    },
+
+    "analysis": {
+      "analyzer": "src.analysis.deals_2025_analyzer.Deals2025Analyzer",
+      "method": "generate_2025_deals_list",
+      "parameters": {
+        "include_owner_names": true,
+        "include_stage_mapping": true
+      }
+    },
+
+    "outputs": [
+      {
+        "format": "pdf",
+        "template": "deals_list",
+        "filename_pattern": "deals_2025_overview_{date}.pdf",
+        "sections": [
+          "summary_statistics",
+          "deals_table_by_status"
+        ],
+        "layout": {
+          "orientation": "landscape",
+          "page_size": "A4",
+          "rows_per_page": 25
+        }
+      },
+      {
+        "format": "csv",
+        "files": [
+          "deals_2025_complete"
+        ]
+      }
+    ],
+
+    "schedule": {
+      "frequency": "on_demand",
+      "recipients": []
+    }
+  },
+
+  "company_pipeline": {
+    "name": "Company Pipeline Report",
+    "description": "Customer pipeline overview with deal and contact associations",
+    "object_type": "companies",
+    "enabled": false,
+    "note": "Placeholder for future implementation",
+
+    "data_source": {
+      "fetcher": "src.fetchers.CompaniesFetcher",
+      "requires_history": false,
+      "requires_associations": ["deals", "contacts"]
+    },
+
+    "analysis": {
+      "analyzer": "src.analyzers.companies_analyzer.CompaniesAnalyzer",
+      "method": "analyze_customer_pipeline",
+      "parameters": {
+        "segment_by_industry": true,
+        "include_deal_metrics": true
+      }
+    },
+
+    "outputs": [
+      {
+        "format": "pdf",
+        "template": "company_pipeline",
+        "filename_pattern": "company_pipeline_{date}.pdf",
+        "sections": [
+          "pipeline_overview",
+          "industry_breakdown",
+          "top_customers"
+        ],
+        "layout": {
+          "orientation": "portrait",
+          "page_size": "A4"
+        }
+      },
+      {
+        "format": "csv",
+        "files": [
+          "companies_overview",
+          "industry_breakdown"
+        ]
+      }
+    ],
+
+    "schedule": {
+      "frequency": "quarterly",
+      "day_of_month": 15,
+      "recipients": ["sales@example.com"]
+    }
+  }
+}
