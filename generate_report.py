@@ -324,7 +324,7 @@ def calculate_weighted_value(amount_str, phase):
         amount = float(str(amount_str).replace('.', '').replace('€', '').replace(',', '.').strip())
         probability = PHASE_PROBABILITIES.get(phase, 0)
         return amount * probability
-    except:
+    except (ValueError, AttributeError, TypeError):
         return 0
 
 
@@ -353,7 +353,7 @@ def merge_months(month_a_df, month_b_df, month_a_name, month_b_name, snapshot_df
             return 'Unbekannt'
         try:
             owner_id_str = str(int(float(owner_id)))
-        except:
+        except (ValueError, TypeError):
             return 'Unbekannt'
         if owners_map and owner_id_str in owners_map:
             return owners_map[owner_id_str]
@@ -403,7 +403,7 @@ def merge_months(month_a_df, month_b_df, month_a_name, month_b_name, snapshot_df
             create_date = pd.to_datetime(create_date_str, utc=True).tz_localize(None)
             today = pd.Timestamp.now().tz_localize(None)
             return (today - create_date).days
-        except:
+        except (ValueError, TypeError, AttributeError):
             return None
 
     if 'Create_Date' in merged.columns:
@@ -463,7 +463,7 @@ def calculate_metrics(comparison_df):
 
         try:
             amount = float(str(row.get('Deal_Value', 0)).replace('.', '').replace('€', '').replace(',', '.').strip())
-        except:
+        except (ValueError, AttributeError, TypeError):
             amount = 0
 
         if '🟢' in status:
@@ -480,7 +480,55 @@ def calculate_metrics(comparison_df):
     return metrics
 
 
-def generate_pdf(comparison_df, month_a, month_b, metrics, contact_data=None):
+def analyze_2025_deals(snapshot_df, owners_map):
+    """
+    Analyze all deals created in 2025
+
+    Args:
+        snapshot_df: DataFrame with deal snapshot data
+        owners_map: Dictionary mapping owner IDs to names
+
+    Returns:
+        DataFrame with 2025 deals or None on error
+    """
+    try:
+        from src.analysis.deals_2025_analyzer import Deals2025Analyzer
+        from src.analysis.stage_mapper import StageMapper
+        from src.config import load_config
+
+        logging.info("Starte 2025-Deals-Analyse")
+
+        # Load configuration
+        config = load_config()
+
+        # Load stage mapping (optional)
+        stage_mapper = None
+        try:
+            stage_mapping_path = os.path.join(os.getcwd(), 'config', 'stage_mapping.json')
+            if os.path.exists(stage_mapping_path):
+                stage_mapper = StageMapper(config_path=stage_mapping_path)
+        except Exception as e:
+            logging.warning(f"Stage mapper konnte nicht geladen werden: {e}")
+
+        # Initialize analyzer
+        analyzer = Deals2025Analyzer(config, stage_mapper=stage_mapper, owners_map=owners_map)
+
+        # Generate 2025 deals list
+        deals_2025_df = analyzer.generate_2025_deals_list()
+
+        if not deals_2025_df.empty:
+            logging.info(f"2025-Deals-Analyse erfolgreich: {len(deals_2025_df)} Deals gefunden")
+            return deals_2025_df
+        else:
+            logging.warning("Keine Deals aus 2025 gefunden")
+            return None
+
+    except Exception as e:
+        logging.error(f"Fehler bei 2025-Deals-Analyse: {e}")
+        return None
+
+
+def generate_pdf(comparison_df, month_a, month_b, metrics, contact_data=None, deals_2025_df=None):
     """Generate PDF report"""
     print("\n" + "=" * 60)
     print("SCHRITT 3: PDF-Report generieren")
@@ -506,7 +554,8 @@ def generate_pdf(comparison_df, month_a, month_b, metrics, contact_data=None):
         month_b=month_b,
         metrics=metrics,
         output_path=output_path,
-        contact_data=contact_data
+        contact_data=contact_data,
+        deals_2025_df=deals_2025_df
     )
 
     logging.info(f"PDF generiert: {pdf_path}")
@@ -661,8 +710,24 @@ Beispiele:
             print("   → PDF wird ohne Contact-Sektion generiert\n")
             contact_data = None
 
+        # 2025 Deals Analysis
+        deals_2025_df = None
+        try:
+            logging.info("Starte 2025-Deals-Analyse")
+            deals_2025_df = analyze_2025_deals(snapshot_df, owners_map)
+            if deals_2025_df is not None:
+                logging.info("2025-Deals-Analyse erfolgreich")
+            else:
+                print("\n⚠️  WARNUNG: Keine Deals aus 2025 gefunden")
+                print("   → PDF wird ohne 2025-Deals-Übersicht generiert\n")
+        except Exception as e:
+            logging.error(f"2025-Deals-Analyse fehlgeschlagen: {e}")
+            print(f"\n⚠️  WARNUNG: 2025-Deals-Analyse fehlgeschlagen: {e}")
+            print("   → PDF wird ohne 2025-Deals-Übersicht generiert\n")
+            deals_2025_df = None
+
         # Generate PDF
-        pdf_path = generate_pdf(comparison, month_a, month_b, metrics, contact_data=contact_data)
+        pdf_path = generate_pdf(comparison, month_a, month_b, metrics, contact_data=contact_data, deals_2025_df=deals_2025_df)
 
         # Summary
         print("\n" + "=" * 60)

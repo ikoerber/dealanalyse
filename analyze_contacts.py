@@ -17,32 +17,7 @@ from typing import Dict, List, Tuple
 import pandas as pd
 
 from src.config import load_config, ConfigurationError
-
-
-def setup_logging(config):
-    """Setup logging for analysis"""
-    timestamp = datetime.now().strftime('%Y-%m-%d_%H-%M-%S')
-    log_filename = f"analyze_contacts_{timestamp}.log"
-    log_filepath = os.path.join(config.logs_dir, log_filename)
-
-    logging.basicConfig(
-        level=logging.INFO,
-        format='%(asctime)s | %(levelname)s | %(name)s | %(message)s',
-        handlers=[
-            logging.FileHandler(log_filepath, encoding='utf-8'),
-            logging.StreamHandler(sys.stdout)
-        ]
-    )
-
-    return log_filepath
-
-
-def print_banner():
-    """Print application banner"""
-    print("=" * 60)
-    print("HubSpot Contact Lead Funnel Analysis")
-    print("=" * 60)
-    print()
+from src.cli import setup_logging, print_banner, CLIErrorHandler
 
 
 def get_last_12_months() -> List[Tuple[str, datetime, datetime]]:
@@ -351,7 +326,7 @@ def print_summary(kpis_path: str, sql_details_path: str, source_matrix_path: str
 
 def main():
     """Main execution function"""
-    print_banner()
+    print_banner("HubSpot Contact Lead Funnel Analysis")
 
     try:
         # Load configuration
@@ -359,7 +334,7 @@ def main():
         config = load_config()
 
         # Setup logging
-        log_file = setup_logging(config)
+        log_file = setup_logging(config, 'analyze_contacts')
         logger = logging.getLogger(__name__)
         logger.info("=" * 60)
         logger.info("Starting Contact Lead Funnel Analysis")
@@ -430,11 +405,7 @@ def main():
         return 0
 
     except ConfigurationError as e:
-        print()
-        print(f"Configuration Error: {e}")
-        print()
-        print("Please check your .env file and ensure all required variables are set.")
-        return 1
+        return CLIErrorHandler.handle_configuration_error(e)
 
     except FileNotFoundError as e:
         print()
@@ -444,12 +415,7 @@ def main():
         return 1
 
     except Exception as e:
-        print()
-        print(f"Unexpected Error: {e}")
-        print()
-        print("Please check the logs for more details.")
-        logging.exception("Unexpected error occurred")
-        return 1
+        return CLIErrorHandler.handle_generic_error(e)
 
 
 if __name__ == '__main__':

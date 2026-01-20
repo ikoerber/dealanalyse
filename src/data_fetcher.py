@@ -8,8 +8,14 @@ from typing import List, Dict, Optional, Tuple
 
 from .config import Config
 from .hubspot_client import HubSpotClient
+from .core import CheckpointManager
 
 logger = logging.getLogger(__name__)
+
+# Configuration constants
+PROGRESS_LOG_INTERVAL = 50  # Log progress every N deals
+CHECKPOINT_SAVE_INTERVAL = 100  # Save checkpoint every N deals
+CONTACT_ENRICHMENT_LOG_INTERVAL = 25  # Log contact enrichment progress every N deals
 
 
 @dataclass
@@ -32,6 +38,9 @@ class DealSnapshot:
     hs_lastmodifieddate: str = ''
     hs_num_associated_queue_tasks: str = ''
     num_associated_contacts: str = ''
+    rejection_reason: str = ''
+    contact_source: str = ''
+    primary_contact_id: str = ''
 
 
 @dataclass
@@ -59,40 +68,35 @@ class DataFetcher:
         """
         self.config = config
         self.client = client
-        self.checkpoint_file = config.checkpoint_file
+        # Initialize checkpoint manager for deals
+        self.checkpoint_manager = CheckpointManager('deals', config.output_dir)
 
     def load_checkpoint(self) -> set:
-        """Load previously processed deal IDs from checkpoint file"""
-        if not os.path.exists(self.checkpoint_file):
-            return set()
+        """
+        Load previously processed deal IDs from checkpoint file
 
-        try:
-            with open(self.checkpoint_file, 'r') as f:
-                data = json.load(f)
-                processed_ids = set(data.get('processed_deal_ids', []))
-                logger.info(f"Loaded checkpoint with {len(processed_ids)} processed deals")
-                return processed_ids
-        except Exception as e:
-            logger.warning(f"Could not load checkpoint: {e}")
-            return set()
+        DEPRECATED: Use self.checkpoint_manager.load() instead
+        Kept for backward compatibility
+        """
+        return self.checkpoint_manager.load()
 
     def save_checkpoint(self, processed_ids: set):
-        """Save processed deal IDs to checkpoint file"""
-        try:
-            with open(self.checkpoint_file, 'w') as f:
-                json.dump({
-                    'processed_deal_ids': list(processed_ids),
-                    'last_updated': datetime.utcnow().isoformat()
-                }, f)
-            logger.debug(f"Checkpoint saved with {len(processed_ids)} deals")
-        except Exception as e:
-            logger.warning(f"Could not save checkpoint: {e}")
+        """
+        Save processed deal IDs to checkpoint file
+
+        DEPRECATED: Use self.checkpoint_manager.save() instead
+        Kept for backward compatibility
+        """
+        self.checkpoint_manager.save(processed_ids)
 
     def clear_checkpoint(self):
-        """Remove checkpoint file"""
-        if os.path.exists(self.checkpoint_file):
-            os.remove(self.checkpoint_file)
-            logger.info("Checkpoint file cleared")
+        """
+        Remove checkpoint file
+
+        DEPRECATED: Use self.checkpoint_manager.clear() instead
+        Kept for backward compatibility
+        """
+        self.checkpoint_manager.clear()
 
     def _parse_timestamp(self, timestamp_str: Optional[str]) -> str:
         """Parse HubSpot timestamp to ISO 8601 format"""
@@ -142,8 +146,66 @@ class DataFetcher:
             num_notes=properties.get('num_notes', '0'),
             hs_lastmodifieddate=self._parse_timestamp(properties.get('hs_lastmodifieddate', '')),
             hs_num_associated_queue_tasks=properties.get('hs_num_associated_queue_tasks', '0'),
-            num_associated_contacts=properties.get('num_associated_contacts', '0')
+            num_associated_contacts=properties.get('num_associated_contacts', '0'),
+            rejection_reason=properties.get('grunde_fur_verlorenen_deal__sc_', ''),
+            contact_source='',  # Will be filled later by fetching primary contact
+            primary_contact_id=''  # Will be filled later by fetching primary contact
         )
+
+    def _get_primary_contact_source(self, deal_id: str) -> Tuple[str, str]:
+        """
+        Get primary contact ID and source for a deal
+
+        Args:
+            deal_id: Deal ID
+
+        Returns:
+            Tuple of (contact_id, source) - both empty strings if not found
+        """
+        try:
+            # Get all contacts associated with the deal
+            contacts = self.client.get_deal_contacts(deal_id)
+
+            if not contacts:
+                return '', ''
+
+            # Find primary contact (associationTypes with typeId 1 or first contact)
+            primary_contact = None
+
+            for contact in contacts:
+                association_types = contact.get('associationTypes', [])
+                for assoc_type in association_types:
+                    # Primary contact association
+                    if assoc_type.get('typeId') == 1:
+                        primary_contact = contact
+                        break
+                if primary_contact:
+                    break
+
+            # Fallback to first contact if no primary found
+            if not primary_contact and contacts:
+                primary_contact = contacts[0]
+
+            if not primary_contact:
+                return '', ''
+
+            contact_id = primary_contact.get('toObjectId', primary_contact.get('id', ''))
+
+            # Fetch contact details to get source
+            contact_details = self.client.get_contact_by_id(contact_id)
+
+            if not contact_details:
+                return contact_id, ''
+
+            # Extract source from contact properties
+            properties = contact_details.get('properties', {})
+            source = properties.get('ursprungliche_quelle__analog_unternehmensquelle_', '')
+
+            return contact_id, source
+
+        except Exception as e:
+            logger.warning(f"Could not fetch primary contact for deal {deal_id}: {e}")
+            return '', ''
 
     def _extract_history_records(
         self,
@@ -237,7 +299,7 @@ class DataFetcher:
                 continue
 
             # Progress logging
-            if idx % 50 == 0 or idx == total_deals:
+            if idx % PROGRESS_LOG_INTERVAL == 0 or idx == total_deals:
                 logger.info(
                     f"Progress: {idx}/{total_deals} deals processed "
                     f"({idx/total_deals*100:.1f}%)"
@@ -275,7 +337,7 @@ class DataFetcher:
 
             # Update checkpoint every 100 deals
             processed_ids.add(deal_id)
-            if idx % 100 == 0:
+            if idx % CHECKPOINT_SAVE_INTERVAL == 0:
                 self.save_checkpoint(processed_ids)
 
         # Final checkpoint save
@@ -285,6 +347,30 @@ class DataFetcher:
             f"Data fetch complete: {len(snapshots)} snapshots, "
             f"{len(history_records)} history records"
         )
+
+        # Second pass: Enrich snapshots with primary contact source
+        logger.info("Starting second pass: Fetching primary contact sources...")
+        logger.info("This may take a while depending on the number of deals.")
+
+        for idx, snapshot in enumerate(snapshots, start=1):
+            # Progress logging
+            if idx % CONTACT_ENRICHMENT_LOG_INTERVAL == 0 or idx == len(snapshots):
+                logger.info(
+                    f"Contact enrichment progress: {idx}/{len(snapshots)} deals "
+                    f"({idx/len(snapshots)*100:.1f}%)"
+                )
+
+            try:
+                contact_id, source = self._get_primary_contact_source(snapshot.deal_id)
+                snapshot.primary_contact_id = contact_id
+                snapshot.contact_source = source if source else ''
+            except Exception as e:
+                logger.warning(f"Error fetching contact for deal {snapshot.deal_id}: {e}")
+                # Continue with empty values
+                snapshot.primary_contact_id = ''
+                snapshot.contact_source = ''
+
+        logger.info("Contact enrichment complete")
 
         return snapshots, history_records
 

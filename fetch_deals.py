@@ -13,46 +13,7 @@ from src.config import load_config, ConfigurationError
 from src.hubspot_client import HubSpotClient, HubSpotAPIError, HubSpotAuthenticationError
 from src.data_fetcher import DataFetcher
 from src.csv_writer import CSVWriter
-
-
-def setup_logging(config):
-    """Setup logging configuration"""
-    # Create log filename with timestamp
-    timestamp = datetime.now().strftime('%Y-%m-%d_%H-%M-%S')
-    log_filename = f"fetch_deals_{timestamp}.log"
-    log_filepath = f"{config.logs_dir}/{log_filename}"
-
-    # Configure logging
-    logging.basicConfig(
-        level=logging.INFO,
-        format='%(asctime)s | %(levelname)s | %(name)s:%(lineno)d | %(message)s',
-        handlers=[
-            logging.FileHandler(log_filepath, encoding='utf-8'),
-            logging.StreamHandler(sys.stdout)
-        ]
-    )
-
-    return log_filepath
-
-
-def format_duration(seconds: float) -> str:
-    """Format duration in seconds to human-readable string"""
-    if seconds < 60:
-        return f"{seconds:.0f}s"
-    elif seconds < 3600:
-        minutes = seconds / 60
-        return f"{minutes:.1f}m"
-    else:
-        hours = seconds / 3600
-        return f"{hours:.1f}h"
-
-
-def print_banner():
-    """Print application banner"""
-    print("=" * 60)
-    print("HubSpot Deal Data Fetcher")
-    print("=" * 60)
-    print()
+from src.cli import setup_logging, format_duration, print_banner, CLIErrorHandler
 
 
 def print_summary(
@@ -94,7 +55,7 @@ def main():
     """Main execution function"""
     start_time = time.time()
 
-    print_banner()
+    print_banner("HubSpot Deal Data Fetcher")
 
     try:
         # Load configuration
@@ -104,7 +65,7 @@ def main():
         print()
 
         # Setup logging
-        log_file = setup_logging(config)
+        log_file = setup_logging(config, 'fetch_deals')
         logger = logging.getLogger(__name__)
         logger.info("=" * 60)
         logger.info("Starting HubSpot Deal Data Fetch")
@@ -195,42 +156,19 @@ def main():
         return 0
 
     except ConfigurationError as e:
-        print()
-        print(f"Configuration Error: {e}")
-        print()
-        print("Please check your .env file and ensure all required variables are set.")
-        print("See .env.example for the required format.")
-        return 1
+        return CLIErrorHandler.handle_configuration_error(e)
 
     except HubSpotAuthenticationError as e:
-        print()
-        print(f"Authentication Error: {e}")
-        print()
-        print("Please verify your HUBSPOT_ACCESS_TOKEN in the .env file.")
-        print("You can create a private app access token in your HubSpot settings:")
-        print("Settings > Integrations > Private Apps")
-        return 1
+        return CLIErrorHandler.handle_authentication_error(e)
 
     except HubSpotAPIError as e:
-        print()
-        print(f"HubSpot API Error: {e}")
-        print()
-        print("Please check the logs for more details.")
-        return 1
+        return CLIErrorHandler.handle_api_error(e)
 
     except KeyboardInterrupt:
-        print()
-        print("Interrupted by user. Progress has been saved to checkpoint.")
-        print("Run the script again to resume from where it left off.")
-        return 130
+        return CLIErrorHandler.handle_keyboard_interrupt(checkpoint_available=True)
 
     except Exception as e:
-        print()
-        print(f"Unexpected Error: {e}")
-        print()
-        print("Please check the logs for more details.")
-        logging.exception("Unexpected error occurred")
-        return 1
+        return CLIErrorHandler.handle_generic_error(e)
 
 
 if __name__ == '__main__':

@@ -181,7 +181,8 @@ class HubSpotClient:
                 "num_notes",
                 "hs_lastmodifieddate",
                 "hs_num_associated_queue_tasks",
-                "num_associated_contacts"
+                "num_associated_contacts",
+                "grunde_fur_verlorenen_deal__sc_"
             ],
             "limit": limit
         }
@@ -262,6 +263,73 @@ class HubSpotClient:
         return {
             'total_api_calls': self.api_call_count
         }
+
+    def search_objects(
+        self,
+        object_type_config,
+        limit: int = 100,
+        after: Optional[str] = None,
+        **filter_substitutions
+    ) -> Dict:
+        """
+        Generic search for any HubSpot object type using ObjectRegistry configuration
+
+        This method provides a unified interface for searching across different object types
+        (deals, contacts, companies, etc.) using configurations from ObjectRegistry.
+
+        Args:
+            object_type_config: ObjectTypeConfig from ObjectRegistry
+            limit: Number of results per page (max 100)
+            after: Pagination cursor from previous response
+            **filter_substitutions: Variable values for filter substitution
+                (e.g., start_date_timestamp=123456789)
+
+        Returns:
+            Dictionary with search results including objects and pagination info
+
+        Example:
+            registry = ObjectRegistry()
+            deals_config = registry.get('deals')
+            result = client.search_objects(
+                deals_config,
+                limit=100,
+                start_date_timestamp=config.start_date_timestamp
+            )
+        """
+        endpoint = object_type_config.api_endpoint
+
+        # Build payload with properties and filters
+        payload = {
+            "properties": object_type_config.properties,
+            "limit": limit
+        }
+
+        # Add filter groups with variable substitution
+        filter_groups = object_type_config.get_filter_groups(**filter_substitutions)
+        if filter_groups:
+            payload["filterGroups"] = filter_groups
+
+        # Add pagination cursor if provided
+        if after:
+            payload["after"] = after
+
+        logger.info(
+            f"Searching {object_type_config.display_name} "
+            f"(limit={limit}, after={after})"
+        )
+
+        response = self._make_request("POST", endpoint, json=payload)
+        data = response.json()
+
+        results_count = len(data.get('results', []))
+        has_more = 'paging' in data and 'next' in data['paging']
+
+        logger.info(
+            f"Retrieved {results_count} {object_type_config.display_name} "
+            f"(has_more={has_more})"
+        )
+
+        return data
 
     @retry(
         stop=stop_after_attempt(3),
@@ -449,3 +517,56 @@ class HubSpotClient:
 
         logger.info(f"Fetched total of {len(all_contacts)} contacts across {page} page(s)")
         return all_contacts
+
+    def get_deal_contacts(self, deal_id: str) -> List[Dict]:
+        """
+        Get contacts associated with a deal via Associations API
+
+        Args:
+            deal_id: HubSpot deal ID
+
+        Returns:
+            List of contact dictionaries with association type info
+        """
+        endpoint = f"/crm/v3/objects/deals/{deal_id}/associations/contacts"
+
+        logger.debug(f"Fetching contacts for deal {deal_id}")
+
+        response = self._make_request("GET", endpoint)
+
+        if response.status_code == 404:
+            logger.debug(f"No contacts found for deal {deal_id}")
+            return []
+
+        data = response.json()
+        return data.get('results', [])
+
+    def get_contact_by_id(self, contact_id: str, properties: List[str] = None) -> Optional[Dict]:
+        """
+        Get contact details by ID
+
+        Args:
+            contact_id: HubSpot contact ID
+            properties: List of properties to fetch (default: firstname, lastname, email, source)
+
+        Returns:
+            Contact dictionary or None if not found
+        """
+        if properties is None:
+            properties = ["firstname", "lastname", "email", "ursprungliche_quelle__analog_unternehmensquelle_"]
+
+        endpoint = f"/crm/v3/objects/contacts/{contact_id}"
+        params = {
+            "properties": ",".join(properties)
+        }
+
+        logger.debug(f"Fetching contact {contact_id}")
+
+        response = self._make_request("GET", endpoint, params=params)
+
+        if response.status_code == 404:
+            logger.debug(f"Contact {contact_id} not found")
+            return None
+
+        data = response.json()
+        return data

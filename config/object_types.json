@@ -1,0 +1,133 @@
+{
+  "deals": {
+    "object_type_id": "deals",
+    "display_name": "Deals",
+    "api_endpoint": "/crm/v3/objects/deals/search",
+    "properties": [
+      "dealname",
+      "amount",
+      "dealstage",
+      "closedate",
+      "createdate",
+      "hs_object_id",
+      "hs_forecast_amount",
+      "hs_forecast_probability",
+      "hubspot_owner_id",
+      "notes_last_contacted",
+      "notes_last_updated",
+      "num_notes",
+      "hs_lastmodifieddate",
+      "hs_num_associated_queue_tasks",
+      "num_associated_contacts",
+      "grunde_fur_verlorenen_deal__sc_"
+    ],
+    "history_properties": [
+      "dealstage",
+      "amount",
+      "closedate"
+    ],
+    "default_filters": [
+      {
+        "propertyName": "createdate",
+        "operator": "GTE",
+        "value": "${start_date_timestamp}"
+      }
+    ],
+    "has_stages": true,
+    "has_history": true,
+    "supports_associations": true,
+    "primary_id_field": "hs_object_id",
+    "name_field": "dealname"
+  },
+  "contacts": {
+    "object_type_id": "contacts",
+    "display_name": "Contacts",
+    "api_endpoint": "/crm/v3/objects/contacts/search",
+    "properties": [
+      "firstname",
+      "lastname",
+      "email",
+      "lifecyclestage",
+      "hs_v2_date_entered_marketingqualifiedlead",
+      "hs_v2_date_entered_salesqualifiedlead",
+      "createdate",
+      "ursprungliche_quelle__analog_unternehmensquelle_",
+      "hs_object_id"
+    ],
+    "history_properties": [],
+    "default_filters": [
+      {
+        "propertyName": "lifecyclestage",
+        "operator": "IN",
+        "values": [
+          "marketingqualifiedlead",
+          "salesqualifiedlead"
+        ]
+      }
+    ],
+    "has_stages": true,
+    "has_history": false,
+    "supports_associations": true,
+    "primary_id_field": "hs_object_id",
+    "name_field": "email"
+  },
+  "companies": {
+    "object_type_id": "companies",
+    "display_name": "Companies",
+    "api_endpoint": "/crm/v3/objects/companies/search",
+    "properties": [
+      "name",
+      "domain",
+      "industry",
+      "city",
+      "state",
+      "country",
+      "phone",
+      "createdate",
+      "hs_lastmodifieddate",
+      "hubspot_owner_id",
+      "num_associated_contacts",
+      "num_associated_deals",
+      "lifecyclestage",
+      "hs_object_id"
+    ],
+    "history_properties": [],
+    "default_filters": [
+      {
+        "propertyName": "createdate",
+        "operator": "GTE",
+        "value": "${start_date_timestamp}"
+      }
+    ],
+    "has_stages": false,
+    "has_history": false,
+    "supports_associations": true,
+    "primary_id_field": "hs_object_id",
+    "name_field": "name"
+  },
+  "activities": {
+    "object_type_id": "activities",
+    "display_name": "Activities",
+    "api_endpoint": "/crm/v3/objects/activities/search",
+    "properties": [
+      "hs_activity_type",
+      "hs_timestamp",
+      "hs_owner_id",
+      "hs_object_id"
+    ],
+    "history_properties": [],
+    "default_filters": [
+      {
+        "propertyName": "hs_timestamp",
+        "operator": "GTE",
+        "value": "${start_date_timestamp}"
+      }
+    ],
+    "has_stages": false,
+    "has_history": false,
+    "supports_associations": true,
+    "primary_id_field": "hs_object_id",
+    "name_field": "hs_activity_type",
+    "note": "Placeholder for future implementation"
+  }
+}

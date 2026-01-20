@@ -77,7 +77,10 @@ class CSVWriter:
             'num_notes',
             'hs_lastmodifieddate',
             'hs_num_associated_queue_tasks',
-            'num_associated_contacts'
+            'num_associated_contacts',
+            'rejection_reason',
+            'contact_source',
+            'primary_contact_id'
         ]
 
         # Ensure all columns exist (in case some are missing)

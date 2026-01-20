@@ -22,7 +22,7 @@ from reportlab.lib.units import mm
 from reportlab.lib.enums import TA_LEFT, TA_CENTER, TA_RIGHT
 from reportlab.platypus import (
     SimpleDocTemplate, Table, TableStyle, Paragraph,
-    Spacer, PageBreak, Frame, PageTemplate
+    Spacer, PageBreak
 )
 from reportlab.pdfgen import canvas
 
@@ -41,6 +41,10 @@ COLORS = {
     'white': colors.white,
     'header': colors.Color(0.4, 0.4, 0.4),           # Dark gray for headers
 }
+
+# Pagination constants
+DEALS_PER_PAGE_COMPARISON = 20  # Rows per page in deal comparison table
+DEALS_PER_PAGE_2025_OVERVIEW = 25  # Rows per page in 2025 deals overview
 
 
 class PDFGenerator:
@@ -132,7 +136,8 @@ class PDFGenerator:
         month_b: str,
         metrics: dict,
         output_path: str,
-        contact_data: Optional[dict] = None
+        contact_data: Optional[dict] = None,
+        deals_2025_df: Optional[pd.DataFrame] = None
     ) -> str:
         """
         Generate complete PDF report with metrics and comparison table.
@@ -145,6 +150,8 @@ class PDFGenerator:
             output_path: Path where PDF should be saved
             contact_data: Optional dictionary with contact analysis data
                          {'kpis': DataFrame, 'sql_details': DataFrame, 'source_breakdown': DataFrame}
+            deals_2025_df: Optional DataFrame with all 2025 deals
+                          (columns: deal_name, amount, status, contact_source, rejection_reason)
 
         Returns:
             Path to the generated PDF file
@@ -179,6 +186,12 @@ class PDFGenerator:
             logger.info("Adding contact report section to PDF")
             story.append(PageBreak())
             story.extend(self._create_contact_report_section(contact_data))
+
+        # Page N+X: 2025 Deals Overview (if data provided)
+        if deals_2025_df is not None and not deals_2025_df.empty:
+            logger.info("Adding 2025 deals overview to PDF")
+            story.append(PageBreak())
+            story.extend(self._create_2025_deals_section(deals_2025_df))
 
         # Build PDF
         doc.build(
@@ -442,8 +455,8 @@ class PDFGenerator:
             'Status_Änderung': 'Status'
         })
 
-        # Pagination: 20 rows per page
-        rows_per_page = 20
+        # Pagination
+        rows_per_page = DEALS_PER_PAGE_COMPARISON
         total_rows = len(df_subset)
         total_pages = math.ceil(total_rows / rows_per_page)
 
@@ -776,6 +789,146 @@ class PDFGenerator:
             ]))
 
             elements.append(table)
+
+        return elements
+
+    def _create_2025_deals_section(self, deals_2025_df: pd.DataFrame) -> List:
+        """
+        Create PDF section for all deals created in 2025
+
+        Args:
+            deals_2025_df: DataFrame with 2025 deals data
+
+        Returns:
+            List of ReportLab Flowables
+        """
+        elements = []
+
+        # Title
+        title = Paragraph("Alle Deals aus 2025 - Übersicht", self.styles['SectionHeading'])
+        elements.append(title)
+        elements.append(Spacer(1, 10*mm))
+
+        # Summary statistics
+        total_deals = len(deals_2025_df)
+        won_deals = len(deals_2025_df[deals_2025_df['status'] == 'Won'])
+        lost_deals = len(deals_2025_df[deals_2025_df['status'] == 'Lost'])
+        no_offer_deals = len(deals_2025_df[deals_2025_df['status'] == 'Kein Angebot'])
+        active_deals = len(deals_2025_df[deals_2025_df['status'] == 'Active'])
+
+        summary_text = f"Gesamt: {total_deals} Deals | Gewonnen: {won_deals} | Verloren: {lost_deals} | Kein Angebot: {no_offer_deals} | Aktiv: {active_deals}"
+        summary_para = Paragraph(summary_text, self.styles['Normal'])
+        elements.append(summary_para)
+        elements.append(Spacer(1, 8*mm))
+
+        # Select columns for display (basis columns as requested)
+        display_columns = ['deal_name', 'amount', 'status', 'contact_source', 'rejection_reason']
+        df_display = deals_2025_df[display_columns].copy()
+
+        # Rename columns for German display
+        df_display = df_display.rename(columns={
+            'deal_name': 'Deal Name',
+            'amount': 'Wert',
+            'status': 'Status',
+            'contact_source': 'Quelle',
+            'rejection_reason': 'Ablehnungsgrund'
+        })
+
+        # Pagination
+        rows_per_page = DEALS_PER_PAGE_2025_OVERVIEW
+        total_rows = len(df_display)
+        total_pages = math.ceil(total_rows / rows_per_page)
+
+        for page_num in range(total_pages):
+            start_idx = page_num * rows_per_page
+            end_idx = min(start_idx + rows_per_page, total_rows)
+            page_df = df_display.iloc[start_idx:end_idx]
+
+            # Create table header
+            header_row = [
+                Paragraph(col, self.styles['TableHeader'])
+                for col in page_df.columns
+            ]
+            table_data = [header_row]
+
+            # Add data rows
+            for _, row in page_df.iterrows():
+                formatted_row = []
+                for col in page_df.columns:
+                    value = row[col]
+
+                    if col == 'Deal Name':
+                        # Use Paragraph for Deal Name to allow word wrap
+                        text = str(value) if pd.notna(value) else '-'
+                        formatted_row.append(Paragraph(text, self.styles['TableCell']))
+                    elif col == 'Wert':
+                        # Format as Euro
+                        formatted_row.append(format_euro(value) if pd.notna(value) and value != 0 else '-')
+                    elif col in ['Quelle', 'Ablehnungsgrund']:
+                        # Use Paragraph for text wrapping
+                        text = str(value) if pd.notna(value) and str(value) != '–' else '–'
+                        formatted_row.append(Paragraph(text, self.styles['TableCell']))
+                    else:
+                        # Plain text for Status
+                        text = str(value) if pd.notna(value) else '-'
+                        formatted_row.append(text)
+
+                table_data.append(formatted_row)
+
+            # Column widths (landscape A4: 257mm available)
+            # Deal Name: 60mm, Wert: 25mm, Status: 20mm, Quelle: 70mm, Ablehnungsgrund: 82mm
+            col_widths = [60*mm, 25*mm, 20*mm, 70*mm, 82*mm]
+
+            table = Table(table_data, colWidths=col_widths, repeatRows=1)
+
+            # Build table style
+            style_commands = [
+                # Header row styling
+                ('BACKGROUND', (0, 0), (-1, 0), COLORS['header']),
+                ('TEXTCOLOR', (0, 0), (-1, 0), colors.white),
+                ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
+                ('FONTSIZE', (0, 0), (-1, 0), 8),
+                ('ALIGN', (0, 0), (-1, 0), 'CENTER'),
+
+                # Data rows styling
+                ('FONTSIZE', (0, 1), (-1, -1), 7),
+                ('FONTNAME', (0, 1), (-1, -1), 'Helvetica'),
+
+                # Grid
+                ('GRID', (0, 0), (-1, -1), 0.5, colors.grey),
+                ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
+                ('LEFTPADDING', (0, 0), (-1, -1), 3),
+                ('RIGHTPADDING', (0, 0), (-1, -1), 3),
+                ('TOPPADDING', (0, 0), (-1, -1), 2),
+                ('BOTTOMPADDING', (0, 0), (-1, -1), 2),
+
+                # Column alignment
+                ('ALIGN', (1, 1), (1, -1), 'RIGHT'),    # Wert - right align
+                ('ALIGN', (2, 1), (2, -1), 'CENTER'),   # Status - center align
+            ]
+
+            # Apply row colors based on status
+            for row_idx, (_, row) in enumerate(page_df.iterrows(), start=1):
+                status = row['Status']
+                if status == 'Won':
+                    bg_color = COLORS['gewonnen']
+                elif status == 'Lost' or status == 'Kein Angebot':
+                    bg_color = COLORS['verloren']
+                else:
+                    bg_color = COLORS['white']
+
+                if bg_color != COLORS['white']:
+                    style_commands.append(
+                        ('BACKGROUND', (0, row_idx), (-1, row_idx), bg_color)
+                    )
+
+            table.setStyle(TableStyle(style_commands))
+
+            elements.append(table)
+
+            # Add page break if not last page
+            if page_num < total_pages - 1:
+                elements.append(PageBreak())
 
         return elements
 
