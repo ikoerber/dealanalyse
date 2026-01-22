@@ -230,6 +230,70 @@ def load_owners():
         return json.load(f)
 
 
+def load_history_data():
+    """Load the latest deal history CSV"""
+    pattern = "output/deal_history_*.csv"
+    files = glob(pattern)
+
+    if not files:
+        logging.warning(f"Keine History-Daten gefunden: {pattern}")
+        return pd.DataFrame()
+
+    latest = max(files, key=os.path.getmtime)
+    logging.info(f"Lade History-Daten: {latest}")
+
+    df = pd.read_csv(latest, encoding='utf-8-sig')
+    df['deal_id'] = df['deal_id'].astype(str)
+
+    # Convert change_timestamp to datetime (mixed format support)
+    df['change_timestamp'] = pd.to_datetime(df['change_timestamp'], format='ISO8601', utc=True)
+
+    return df
+
+
+def get_probability_at_time(deal_id, target_time, history_df, current_probability=None):
+    """
+    Get the deal probability at a specific point in time.
+
+    Args:
+        deal_id: Deal ID
+        target_time: Target datetime (timezone-aware)
+        history_df: DataFrame with history data
+        current_probability: Current probability from snapshot (fallback)
+
+    Returns:
+        Probability value (0-1 scale) or None if not found
+    """
+    if history_df.empty:
+        return current_probability
+
+    # Filter for this deal and hs_deal_stage_probability changes
+    deal_history = history_df[
+        (history_df['deal_id'] == str(deal_id)) &
+        (history_df['property_name'] == 'hs_deal_stage_probability')
+    ].copy()
+
+    if deal_history.empty:
+        # No history found - use current probability
+        return current_probability
+
+    # Get all changes up to target_time
+    changes_until_target = deal_history[deal_history['change_timestamp'] <= target_time]
+
+    if changes_until_target.empty:
+        # No changes before target_time - deal didn't exist or probability not set
+        return None
+
+    # Get the last change before target_time
+    latest_change = changes_until_target.sort_values('change_timestamp').iloc[-1]
+
+    try:
+        prob = float(latest_change['property_value'])
+        return prob
+    except (ValueError, TypeError):
+        return current_probability
+
+
 def get_available_months(df):
     """Get chronologically sorted list of months"""
     if 'MonthYear' not in df.columns:
@@ -316,19 +380,46 @@ PHASE_PROBABILITIES = {
 }
 
 
-def calculate_weighted_value(amount_str, phase):
-    """Calculate weighted deal value based on phase probability"""
+def calculate_weighted_value(amount_str, phase, hubspot_probability=None):
+    """
+    Calculate weighted deal value based on probability
+
+    Args:
+        amount_str: Deal amount as string or number
+        phase: Deal phase/stage name
+        hubspot_probability: Optional HubSpot forecast probability (0-100 or 0-1)
+                            If provided and valid, this is used instead of phase-based probability
+
+    Returns:
+        Weighted value (amount * probability)
+    """
     if amount_str == '-' or pd.isna(amount_str):
         return 0
+
     try:
         amount = float(str(amount_str).replace('.', '').replace('€', '').replace(',', '.').strip())
+
+        # Use HubSpot probability if available and valid
+        if hubspot_probability is not None and not pd.isna(hubspot_probability):
+            try:
+                prob = float(hubspot_probability)
+                # Handle both 0-100 and 0-1 formats
+                if prob > 1:
+                    prob = prob / 100.0
+                # Validate range
+                if 0 <= prob <= 1:
+                    return amount * prob
+            except (ValueError, TypeError):
+                pass
+
+        # Fallback to phase-based probability
         probability = PHASE_PROBABILITIES.get(phase, 0)
         return amount * probability
     except (ValueError, AttributeError, TypeError):
         return 0
 
 
-def merge_months(month_a_df, month_b_df, month_a_name, month_b_name, snapshot_df=None, owners_map=None):
+def merge_months(month_a_df, month_b_df, month_a_name, month_b_name, snapshot_df=None, owners_map=None, history_df=None):
     """Merge two months side-by-side for comparison"""
     month_a_df = month_a_df.copy()
     month_b_df = month_b_df.copy()
@@ -346,6 +437,58 @@ def merge_months(month_a_df, month_b_df, month_a_name, month_b_name, snapshot_df
     if snapshot_df is not None and not snapshot_df.empty:
         merged['Deal ID'] = merged['Deal ID'].astype(str)
         merged = pd.merge(merged, snapshot_df, on='Deal ID', how='left')
+
+    # Calculate month-end timestamps for historical probability lookup
+    month_order = {
+        'Januar': 1, 'Februar': 2, 'März': 3, 'April': 4,
+        'Mai': 5, 'Juni': 6, 'Juli': 7, 'August': 8,
+        'September': 9, 'Oktober': 10, 'November': 11, 'Dezember': 12
+    }
+
+    def get_month_end_timestamp(month_year_str):
+        """Get the last second of a month as UTC timestamp"""
+        try:
+            parts = month_year_str.split(' ')
+            if len(parts) == 2:
+                month_name, year_str = parts
+                month_num = month_order.get(month_name, 1)
+                year = int(year_str)
+
+                # Get last day of month
+                import calendar
+                last_day = calendar.monthrange(year, month_num)[1]
+
+                # Create timestamp for last second of the month (23:59:59)
+                from datetime import datetime, timezone
+                month_end = datetime(year, month_num, last_day, 23, 59, 59, tzinfo=timezone.utc)
+                return month_end
+        except Exception:
+            pass
+        return None
+
+    month_a_end = get_month_end_timestamp(month_a_name)
+    month_b_end = get_month_end_timestamp(month_b_name)
+
+    # Add historical probability columns if history data is available
+    if history_df is not None and not history_df.empty and month_a_end and month_b_end:
+        logging.info(f"Rekonstruiere historische Wahrscheinlichkeiten für {month_a_name} und {month_b_name}")
+
+        def get_hist_prob(row, target_time):
+            """Get historical probability for a deal at target time"""
+            deal_id = row['Deal ID']
+            current_prob = row.get('HubSpot_Probability', None) if 'HubSpot_Probability' in row.index else None
+            return get_probability_at_time(deal_id, target_time, history_df, current_prob)
+
+        merged['HubSpot_Probability_A'] = merged.apply(lambda row: get_hist_prob(row, month_a_end), axis=1)
+        merged['HubSpot_Probability_B'] = merged.apply(lambda row: get_hist_prob(row, month_b_end), axis=1)
+    else:
+        # Fallback: use current probability for both months
+        if 'HubSpot_Probability' in merged.columns:
+            merged['HubSpot_Probability_A'] = merged['HubSpot_Probability']
+            merged['HubSpot_Probability_B'] = merged['HubSpot_Probability']
+        else:
+            merged['HubSpot_Probability_A'] = None
+            merged['HubSpot_Probability_B'] = None
 
     # Owner names
     def get_owner_name(owner_id):
@@ -379,19 +522,47 @@ def merge_months(month_a_df, month_b_df, month_a_name, month_b_name, snapshot_df
     merged['Deal_Value'] = merged.apply(get_current_amount, axis=1)
 
     # Probabilities
-    def get_prob(phase):
+    # Use historical HubSpot probability if available, otherwise fall back to phase-based
+    def get_probability_display(row, phase_col, prob_col):
+        """Get probability for display (0-100 scale)"""
+        phase = row[phase_col]
+
+        # Try to use historical HubSpot probability first
+        if prob_col in row.index and pd.notna(row[prob_col]):
+            try:
+                prob = float(row[prob_col])
+                # Handle both 0-100 and 0-1 formats
+                if prob <= 1:
+                    prob = prob * 100
+                return prob
+            except (ValueError, TypeError):
+                pass
+
+        # Fallback to phase-based probability
         return PHASE_PROBABILITIES.get(phase, 0) * 100
 
-    merged['Probability_A'] = merged['Current_Phase_A'].apply(get_prob)
-    merged['Probability_B'] = merged['Current_Phase_B'].apply(get_prob)
+    merged['Probability_A'] = merged.apply(
+        lambda row: get_probability_display(row, 'Current_Phase_A', 'HubSpot_Probability_A'),
+        axis=1
+    )
+    merged['Probability_B'] = merged.apply(
+        lambda row: get_probability_display(row, 'Current_Phase_B', 'HubSpot_Probability_B'),
+        axis=1
+    )
 
-    # Weighted values
+    # Weighted values - use historical HubSpot probability if available
+    def calculate_weighted_for_row(row, phase_col, prob_col):
+        """Calculate weighted value using historical HubSpot probability if available"""
+        phase = row[phase_col]
+        hubspot_prob = row.get(prob_col, None) if prob_col in row.index else None
+        return calculate_weighted_value(row['Deal_Value'], phase, hubspot_prob)
+
     merged['Weighted_Value_A'] = merged.apply(
-        lambda row: calculate_weighted_value(row['Deal_Value'], row['Current_Phase_A']),
+        lambda row: calculate_weighted_for_row(row, 'Current_Phase_A', 'HubSpot_Probability_A'),
         axis=1
     )
     merged['Weighted_Value_B'] = merged.apply(
-        lambda row: calculate_weighted_value(row['Deal_Value'], row['Current_Phase_B']),
+        lambda row: calculate_weighted_for_row(row, 'Current_Phase_B', 'HubSpot_Probability_B'),
         axis=1
     )
 
@@ -415,7 +586,15 @@ def merge_months(month_a_df, month_b_df, month_a_name, month_b_name, snapshot_df
     def get_status_change(row):
         phase_a = row['Current_Phase_A']
         phase_b = row['Current_Phase_B']
+        prob_a = row.get('Probability_A', 0)
+        prob_b = row.get('Probability_B', 0)
         closed = ['Gewonnen', 'Verloren', 'Kein Angebot']
+
+        # Check for probability change (threshold: 5% to ignore minor changes)
+        prob_changed = abs(prob_b - prob_a) > 5
+        prob_change_text = ""
+        if prob_changed and prob_a > 0 and prob_b > 0:
+            prob_change_text = f" (Prob: {prob_a:.0f}% → {prob_b:.0f}%)"
 
         if phase_a in closed and phase_b in closed:
             if phase_a == phase_b:
@@ -429,7 +608,11 @@ def merge_months(month_a_df, month_b_df, month_a_name, month_b_name, snapshot_df
         elif phase_a == '-' and phase_b != '-':
             return f'🆕 Neu'
         elif phase_a != phase_b:
-            return f'🔵 {phase_a} → {phase_b}'
+            # Phase changed - add probability change if present
+            return f'🔵 {phase_a} → {phase_b}{prob_change_text}'
+        elif prob_changed:
+            # Only probability changed, no phase change
+            return f'📊 Prob: {prob_a:.0f}% → {prob_b:.0f}%'
 
         return '⚪ Keine Änderung'
 
@@ -528,38 +711,84 @@ def analyze_2025_deals(snapshot_df, owners_map):
         return None
 
 
-def generate_pdf(comparison_df, month_a, month_b, metrics, contact_data=None, deals_2025_df=None):
-    """Generate PDF report"""
+def generate_pdf(comparison_df, month_a, month_b, metrics, contact_data=None, deals_2025_df=None, pdf_parts=None):
+    """
+    Generate PDF reports (split into two separate PDFs)
+
+    Args:
+        pdf_parts: List of integers [1, 2] specifying which parts to generate.
+                  None or empty list means generate all parts.
+    """
     print("\n" + "=" * 60)
-    print("SCHRITT 3: PDF-Report generieren")
+    print("SCHRITT 3: PDF-Reports generieren")
     print("=" * 60 + "\n")
 
     from src.reporting.pdf_generator import PDFGenerator
 
-    # Prepare output path
+    # Prepare output directory
     output_dir = Path("output/reports")
     output_dir.mkdir(parents=True, exist_ok=True)
 
     timestamp = datetime.now().strftime('%Y-%m-%d')
     month_a_short = month_a.replace(' ', '_')
     month_b_short = month_b.replace(' ', '_')
-    output_path = str(output_dir / f"pipeline_vergleich_{month_a_short}_vs_{month_b_short}_{timestamp}.pdf")
 
-    # Generate PDF
     generator = PDFGenerator(company_name="Smart Commerce SE")
+    generated_pdfs = []
 
-    pdf_path = generator.generate_comparison_pdf(
-        comparison_df=comparison_df,
-        month_a=month_a,
-        month_b=month_b,
-        metrics=metrics,
-        output_path=output_path,
-        contact_data=contact_data,
-        deals_2025_df=deals_2025_df
-    )
+    # Determine which parts to generate
+    generate_all = pdf_parts is None or len(pdf_parts) == 0
+    generate_part_1 = generate_all or 1 in pdf_parts
+    generate_part_2 = generate_all or 2 in pdf_parts
 
-    logging.info(f"PDF generiert: {pdf_path}")
-    return pdf_path
+    # PDF 1: Pipeline Comparison (Übersicht + Deal-Vergleich Detail)
+    if generate_part_1:
+        print("📄 Generiere PDF 1: Pipeline-Vergleich (Übersicht + Deal-Vergleich Detail)")
+        pipeline_pdf_path = str(output_dir / f"1_pipeline_vergleich_{month_a_short}_vs_{month_b_short}_{timestamp}.pdf")
+
+        pdf1_path = generator.generate_pipeline_comparison_pdf(
+            comparison_df=comparison_df,
+            month_a=month_a,
+            month_b=month_b,
+            metrics=metrics,
+            output_path=pipeline_pdf_path
+        )
+
+        logging.info(f"PDF 1 (Pipeline-Vergleich) generiert: {pdf1_path}")
+        print(f"   ✅ {pdf1_path}")
+        generated_pdfs.append(pdf1_path)
+    else:
+        print("⏭️  PDF 1 übersprungen (--pdf-parts)")
+        logging.info("PDF 1 übersprungen (nicht in --pdf-parts)")
+
+    # PDF 2: Supplementary Reports (Contact Funnel + 2025 Deals)
+    if generate_part_2:
+        has_supplementary_data = contact_data is not None or (deals_2025_df is not None and not deals_2025_df.empty)
+
+        if has_supplementary_data:
+            print("\n📄 Generiere PDF 2: Zusatzberichte (Contact Funnel + 2025 Deals Übersicht)")
+            supplementary_pdf_path = str(output_dir / f"2_zusatzberichte_{month_a_short}_vs_{month_b_short}_{timestamp}.pdf")
+
+            pdf2_path = generator.generate_supplementary_reports_pdf(
+                month_a=month_a,
+                month_b=month_b,
+                output_path=supplementary_pdf_path,
+                contact_data=contact_data,
+                deals_2025_df=deals_2025_df
+            )
+
+            if pdf2_path:
+                logging.info(f"PDF 2 (Zusatzberichte) generiert: {pdf2_path}")
+                print(f"   ✅ {pdf2_path}")
+                generated_pdfs.append(pdf2_path)
+        else:
+            print("\n⏭️  PDF 2 übersprungen (keine Zusatzdaten vorhanden)")
+            logging.info("PDF 2 übersprungen - keine Contact-Daten oder 2025-Deals vorhanden")
+    else:
+        print("\n⏭️  PDF 2 übersprungen (--pdf-parts)")
+        logging.info("PDF 2 übersprungen (nicht in --pdf-parts)")
+
+    return generated_pdfs
 
 
 def main():
@@ -568,9 +797,13 @@ def main():
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Beispiele:
-  python generate_report.py                           # Komplette Pipeline
+  python generate_report.py                           # Komplette Pipeline (beide PDFs)
   python generate_report.py --skip-fetch              # Ohne HubSpot-Abruf
   python generate_report.py --months "Dezember 2025" "Januar 2026"
+  python generate_report.py --pdf-parts 1             # Nur Pipeline-Vergleich PDF
+  python generate_report.py --pdf-parts 2             # Nur Zusatzberichte PDF
+  python generate_report.py --pdf-parts 1 2           # Beide PDFs (default)
+  python generate_report.py --skip-fetch --skip-analysis --pdf-parts 1  # Schnelle PDF-Iteration
         """
     )
 
@@ -591,6 +824,15 @@ Beispiele:
         nargs=2,
         metavar=('MONAT_A', 'MONAT_B'),
         help='Zu vergleichende Monate (z.B. "Dezember 2025" "Januar 2026")'
+    )
+
+    parser.add_argument(
+        '--pdf-parts',
+        nargs='+',
+        type=int,
+        choices=[1, 2],
+        metavar='N',
+        help='Welche PDF-Teile generieren: 1 (Pipeline-Vergleich), 2 (Zusatzberichte). Standard: beide'
     )
 
     args = parser.parse_args()
@@ -635,6 +877,7 @@ Beispiele:
 
         snapshot_df = load_snapshot_data()
         owners_map = load_owners()
+        history_df = load_history_data()
 
         all_months = get_available_months(df)
         if len(all_months) < 2:
@@ -662,7 +905,7 @@ Beispiele:
         # Merge and calculate
         comparison = merge_months(
             month_a_data, month_b_data, month_a, month_b,
-            snapshot_df=snapshot_df, owners_map=owners_map
+            snapshot_df=snapshot_df, owners_map=owners_map, history_df=history_df
         )
 
         metrics = calculate_metrics(comparison)
@@ -726,15 +969,22 @@ Beispiele:
             print("   → PDF wird ohne 2025-Deals-Übersicht generiert\n")
             deals_2025_df = None
 
-        # Generate PDF
-        pdf_path = generate_pdf(comparison, month_a, month_b, metrics, contact_data=contact_data, deals_2025_df=deals_2025_df)
+        # Generate PDFs
+        pdf_paths = generate_pdf(
+            comparison, month_a, month_b, metrics,
+            contact_data=contact_data,
+            deals_2025_df=deals_2025_df,
+            pdf_parts=args.pdf_parts
+        )
 
         # Summary
         print("\n" + "=" * 60)
         print("✅ Pipeline erfolgreich abgeschlossen")
         print("=" * 60)
-        print(f"\n📄 PDF-Report: {pdf_path}")
-        print(f"📋 Log-Datei:  {log_file}")
+        print(f"\n📄 Generierte PDF-Reports:")
+        for idx, pdf_path in enumerate(pdf_paths, 1):
+            print(f"   {idx}. {pdf_path}")
+        print(f"\n📋 Log-Datei: {log_file}")
         print()
 
         logging.info("Pipeline erfolgreich abgeschlossen")

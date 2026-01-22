@@ -129,6 +129,135 @@ class PDFGenerator:
             wordWrap='CJK'
         ))
 
+    def generate_pipeline_comparison_pdf(
+        self,
+        comparison_df: pd.DataFrame,
+        month_a: str,
+        month_b: str,
+        metrics: dict,
+        output_path: str
+    ) -> str:
+        """
+        Generate Pipeline Comparison PDF (Part 1): Metrics Overview + Deal Comparison Detail.
+
+        Args:
+            comparison_df: DataFrame with deal comparison data
+            month_a: First month name (e.g., "Januar 2026")
+            month_b: Second month name (e.g., "Februar 2026")
+            metrics: Dictionary with calculated metrics
+            output_path: Path where PDF should be saved
+
+        Returns:
+            Path to the generated PDF file
+        """
+        logger.info(f"Generating Pipeline Comparison PDF for {month_a} vs {month_b}")
+
+        # Ensure output directory exists
+        Path(output_path).parent.mkdir(parents=True, exist_ok=True)
+
+        # Create PDF document
+        doc = SimpleDocTemplate(
+            output_path,
+            pagesize=landscape(A4),
+            rightMargin=20*mm,
+            leftMargin=20*mm,
+            topMargin=20*mm,
+            bottomMargin=15*mm
+        )
+
+        # Build document content
+        story = []
+
+        # Page 1: Metrics Summary
+        story.extend(self._create_metrics_page(month_a, month_b, metrics))
+
+        # Page 2+: Detailed Comparison Table
+        story.append(PageBreak())
+        story.extend(self._create_comparison_table(comparison_df, month_a, month_b))
+
+        # Build PDF
+        doc.build(
+            story,
+            onFirstPage=lambda canvas, doc: self._create_header(canvas, month_a, month_b),
+            onLaterPages=lambda canvas, doc: self._create_header(canvas, month_a, month_b)
+        )
+
+        logger.info(f"Pipeline Comparison PDF successfully generated: {output_path}")
+        return output_path
+
+    def generate_supplementary_reports_pdf(
+        self,
+        month_a: str,
+        month_b: str,
+        output_path: str,
+        contact_data: Optional[dict] = None,
+        deals_2025_df: Optional[pd.DataFrame] = None
+    ) -> Optional[str]:
+        """
+        Generate Supplementary Reports PDF (Part 2): Contact Funnel + 2025 Deals Overview.
+
+        Args:
+            month_a: First month name (e.g., "Januar 2026")
+            month_b: Second month name (e.g., "Februar 2026")
+            output_path: Path where PDF should be saved
+            contact_data: Optional dictionary with contact analysis data
+                         {'kpis': DataFrame, 'sql_details': DataFrame, 'source_breakdown': DataFrame}
+            deals_2025_df: Optional DataFrame with all 2025 deals
+                          (columns: deal_name, amount, status, contact_source, rejection_reason)
+
+        Returns:
+            Path to the generated PDF file, or None if no data to include
+        """
+        # Check if there's any data to include
+        has_contact_data = contact_data is not None
+        has_2025_deals = deals_2025_df is not None and not deals_2025_df.empty
+
+        if not has_contact_data and not has_2025_deals:
+            logger.info("No supplementary data to include - skipping PDF generation")
+            return None
+
+        logger.info(f"Generating Supplementary Reports PDF for {month_a} vs {month_b}")
+
+        # Ensure output directory exists
+        Path(output_path).parent.mkdir(parents=True, exist_ok=True)
+
+        # Create PDF document
+        doc = SimpleDocTemplate(
+            output_path,
+            pagesize=landscape(A4),
+            rightMargin=20*mm,
+            leftMargin=20*mm,
+            topMargin=20*mm,
+            bottomMargin=15*mm
+        )
+
+        # Build document content
+        story = []
+        first_section = True
+
+        # Contact Report Section (if data provided)
+        if has_contact_data:
+            logger.info("Adding contact report section to PDF")
+            story.extend(self._create_contact_report_section(contact_data))
+            first_section = False
+
+        # 2025 Deals Overview (if data provided)
+        if has_2025_deals:
+            logger.info("Adding 2025 deals overview to PDF")
+            if not first_section:
+                story.append(PageBreak())
+            story.extend(self._create_2025_deals_section(deals_2025_df))
+
+        # Build PDF
+        doc.build(
+            story,
+            onFirstPage=lambda canvas, doc: self._create_header(canvas, month_a, month_b),
+            onLaterPages=lambda canvas, doc: self._create_header(canvas, month_a, month_b)
+        )
+
+        logger.info(f"Supplementary Reports PDF successfully generated: {output_path}")
+        return output_path
+
     def generate_comparison_pdf(
         self,
         comparison_df: pd.DataFrame,
@@ -141,6 +270,9 @@ class PDFGenerator:
     ) -> str:
         """
         Generate complete PDF report with metrics and comparison table.
+
+        DEPRECATED: This method generates a single combined PDF.
+        For split reports, use generate_pipeline_comparison_pdf() and generate_supplementary_reports_pdf().
 
         Args:
             comparison_df: DataFrame with deal comparison data
