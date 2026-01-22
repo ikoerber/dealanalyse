@@ -39,7 +39,7 @@ Opens web interface at `http://localhost:8501` with:
 
 ### PDF Report Generation
 ```bash
-# Full pipeline: Fetch + Analyze + PDF
+# Full pipeline: Fetch + Analyze + PDF (generates 2 PDFs)
 python generate_report.py
 
 # Skip steps for faster iteration
@@ -48,6 +48,14 @@ python generate_report.py --skip-analysis           # Use existing CSV reports
 
 # Compare specific months
 python generate_report.py --months "Dezember 2025" "Januar 2026"
+
+# Generate specific PDFs only
+python generate_report.py --pdf-parts 1             # Only Pipeline Comparison (PDF 1)
+python generate_report.py --pdf-parts 2             # Only Supplementary Reports (PDF 2)
+python generate_report.py --pdf-parts 1 2           # Both PDFs (default)
+
+# Fast iteration during layout changes
+python generate_report.py --skip-fetch --skip-analysis --pdf-parts 1
 ```
 
 ### Data Pipeline (Manual Steps)
@@ -103,16 +111,27 @@ print(f'Fetched {stats["total_companies"]} companies')
 
 ### 2. PDF Report Generator (`generate_report.py`)
 
-**Report Structure:**
+**Generates 2 separate PDFs:**
+
+**PDF 1: Pipeline Comparison (`1_pipeline_vergleich_*.pdf`)**
 - **Page 1**: Metrics summary (Pipeline comparison, Closed deals)
 - **Page 2+**: Detailed deal comparison table (Landscape A4, 20 deals/page)
-- **Contact Funnel Section**: MQL/SQL conversion tracking
+
+**PDF 2: Supplementary Reports (`2_zusatzberichte_*.pdf`)**
+- **Contact Funnel**: MQL/SQL conversion tracking
 - **2025 Deals Overview**: Complete list with sources and rejection reasons
+
+**Key Features:**
+- **Historical HubSpot Probabilities**: Uses actual `hs_forecast_probability` from deal history instead of phase-based estimates
+- **Probability Change Tracking**: Status column shows probability changes (e.g., "🔵 Negotiation → Proposal (Prob: 75% → 40%)")
+- **Time-Travel Reconstruction**: Reconstructs probability at month-end for accurate historical comparison
+- **Selective Generation**: `--pdf-parts 1|2` to generate only specific PDFs
 
 **Formatting:**
 - German locale: `1.234.567 €`, `DD.MM.YYYY`, `18,5%`
 - Text wrapping for long fields
 - Color-coded rows (Green=Won, Red=Lost, Blue=Changed, Yellow=New)
+- Probability changes highlighted in status text
 
 ### 3. Multi-Object Architecture (Phase 1 & 2)
 
@@ -374,6 +393,34 @@ Compares deal state at month start vs. month end:
 
 Priority: WON > LOST > PUSHED > ADVANCED > REGRESSED > STALLED
 
+### Historical HubSpot Probabilities
+
+The system uses **actual HubSpot forecast probabilities** from deal history instead of fixed phase-based estimates:
+
+**How it Works:**
+1. Loads `deal_history_*.csv` containing all `hs_deal_stage_probability` changes
+2. For each month comparison, calculates month-end timestamp (e.g., Dec 31, 23:59:59 UTC)
+3. Reconstructs probability for each deal at that specific point in time
+4. Creates separate `HubSpot_Probability_A` and `HubSpot_Probability_B` columns
+5. Uses these historical values for weighted pipeline calculations
+
+**Benefits:**
+- ✅ Accurate historical forecasts (uses actual values from that time)
+- ✅ Tracks manual probability adjustments in HubSpot
+- ✅ Different probabilities for same phase (e.g., Negotiation: 75% → 90%)
+- ✅ Fallback to phase-based probabilities if history unavailable
+
+**Probability Change Display:**
+Status column shows probability changes > 5%:
+- With phase change: `🔵 Qualification → Negotiation (Prob: 20% → 90%)`
+- Without phase change: `📊 Prob: 50% → 75%`
+
+**Implementation:**
+- `load_history_data()`: Loads deal history CSV
+- `get_probability_at_time()`: Time-travel reconstruction function
+- `merge_months()`: Creates historical probability columns
+- `calculate_weighted_value()`: Uses HubSpot values with fallback
+
 ### Stage Configuration
 
 Pipeline stages defined in `config/stage_mapping.json`:
@@ -462,8 +509,13 @@ HUBSPOT_PORTAL_ID=12345678  # For clickable dashboard links
 - `source_breakdown_YYYY-MM-DD.csv`: Lead source matrix
 
 ### PDF Reports (`output/reports/`)
-- `deal_comparison_[MonthA]_vs_[MonthB]_YYYY-MM-DD.pdf`
-- Example: `deal_comparison_Dezember_2025_vs_Januar_2026_2026-01-10.pdf`
+**Two separate PDFs generated:**
+- `1_pipeline_vergleich_[MonthA]_vs_[MonthB]_YYYY-MM-DD.pdf` - Pipeline comparison with metrics and deal detail table
+- `2_zusatzberichte_[MonthA]_vs_[MonthB]_YYYY-MM-DD.pdf` - Contact funnel and 2025 deals overview
+
+**Examples:**
+- `1_pipeline_vergleich_Dezember_2025_vs_Januar_2026_2026-01-22.pdf`
+- `2_zusatzberichte_Dezember_2025_vs_Januar_2026_2026-01-22.pdf`
 
 ## Development Notes
 

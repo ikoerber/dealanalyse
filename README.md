@@ -1,13 +1,22 @@
-# HubSpot Deal Data Fetcher
+# HubSpot Multi-Object Reporting Service
 
-Automatischer Abruf von Deal-Daten aus HubSpot zur Datenqualitätsprüfung und anschließenden Analyse für Aufsichtsrat-Berichte.
+Automatisierte HubSpot-Datenanalyse und Report-Generierung für Aufsichtsrat-Berichte. Mit Multi-Object-Architecture für Deals, Contacts und Companies.
 
 ## Übersicht
 
-Dieses Skript ruft alle relevanten Deal-Daten aus HubSpot ab und exportiert sie in zwei CSV-Dateien:
+Umfassendes Reporting-System mit drei Hauptkomponenten:
 
-1. **Deal Snapshot** - Aktueller Status aller Deals
-2. **Deal History** - Vollständige Historie aller Änderungen an Deals
+1. **Interactive Dashboard** - Streamlit Web-App für monatlichen Deal-Vergleich
+2. **PDF Report Generator** - Automatisierte Board-Reports (2 separate PDFs)
+3. **Multi-Object Architecture** - Erweiterbare, config-basierte Architektur für HubSpot-Objekte
+
+### Hauptfeatures
+
+- ✅ **Historische HubSpot-Wahrscheinlichkeiten**: Verwendet echte `hs_forecast_probability` aus der Deal-History
+- ✅ **Wahrscheinlichkeitsänderungs-Tracking**: Status-Spalte zeigt Änderungen an (z.B. "🔵 Negotiation → Proposal (Prob: 75% → 40%)")
+- ✅ **Split-PDFs**: Separate PDFs für Pipeline-Vergleich und Zusatzberichte
+- ✅ **Time-Travel Rekonstruktion**: Rekonstruiert Wahrscheinlichkeit zum Monatsende für genauen historischen Vergleich
+- ✅ **Selektive PDF-Generierung**: `--pdf-parts 1|2` für schnellere Iterationen
 
 ## Voraussetzungen
 
@@ -65,52 +74,79 @@ HUBSPOT_ACCESS_TOKEN=pat-na1-xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx
 
 ## Verwendung
 
-### Skript ausführen
+### 1. Interactive Dashboard
 
 ```bash
-# Virtual Environment aktivieren
+source venv/bin/activate
+streamlit run dashboard_monthly.py
+```
+
+Öffnet Web-Interface auf `http://localhost:8501` mit:
+- Side-by-side Monatsvergleich
+- Pipeline-Metriken mit gewichteten Werten
+- Filterbare Deal-Tabellen
+- Clickable HubSpot Deal-Links
+
+### 2. PDF Report Generation
+
+```bash
 source venv/bin/activate
 
-# Skript starten
-python fetch_deals.py
+# Komplette Pipeline (Fetch + Analyze + 2 PDFs)
+python generate_report.py
+
+# Schnelle Iteration (nutzt vorhandene Daten)
+python generate_report.py --skip-fetch --skip-analysis
+
+# Nur bestimmte PDFs generieren
+python generate_report.py --pdf-parts 1  # Nur Pipeline-Vergleich
+python generate_report.py --pdf-parts 2  # Nur Zusatzberichte
+
+# Spezifische Monate vergleichen
+python generate_report.py --months "Dezember 2025" "Januar 2026"
+```
+
+### 3. Data Pipeline (Manuell)
+
+```bash
+# Legacy Skripte (noch voll funktionsfähig)
+python fetch_deals.py        # Fetch von HubSpot
+python fetch_contacts.py     # Contact-Daten abrufen
+python analyze_deals.py      # Analyse generieren
+python analyze_contacts.py   # Contact-Funnel-Analyse
 ```
 
 ### Ausgabe
 
-Das Skript erstellt folgende Dateien im `output/` Verzeichnis:
+#### PDF Reports (`output/reports/`)
 
-#### 1. `deals_snapshot_YYYY-MM-DD.csv`
+**Zwei separate PDFs:**
 
-Enthält den aktuellen Status aller Deals:
+1. **`1_pipeline_vergleich_[MonthA]_vs_[MonthB]_YYYY-MM-DD.pdf`**
+   - Seite 1: Metriken-Übersicht (Pipeline-Vergleich, Abgeschlossene Deals)
+   - Seite 2+: Detail-Tabelle mit allen Deals (20 Deals/Seite, Landscape A4)
+   - Historische HubSpot-Wahrscheinlichkeiten
+   - Wahrscheinlichkeitsänderungen im Status
 
-| Spalte | Beschreibung |
-|--------|--------------|
-| deal_id | HubSpot Deal-ID |
-| deal_name | Name des Deals |
-| current_amount | Aktueller Deal-Wert |
-| current_dealstage | Aktuelle Pipeline-Phase |
-| current_closedate | Geplantes Abschlussdatum |
-| create_date | Erstellungsdatum |
-| has_history | Ob Historie verfügbar ist |
-| fetch_timestamp | Zeitpunkt des Datenabrufs |
+2. **`2_zusatzberichte_[MonthA]_vs_[MonthB]_YYYY-MM-DD.pdf`**
+   - Contact-Funnel (MQL/SQL Conversion)
+   - 2025 Deals Übersicht mit Quellen und Ablehnungsgründen
 
-#### 2. `deal_history_YYYY-MM-DD.csv`
+#### CSV Snapshots (`output/`)
 
-Enthält alle historischen Änderungen (eine Zeile pro Änderung):
+- `deals_snapshot_YYYY-MM-DD.csv`: Aktueller Deal-Status (16+ Felder inkl. `hs_forecast_probability`)
+- `deal_history_YYYY-MM-DD.csv`: Vollständige Änderungshistorie inkl. `hs_deal_stage_probability` Änderungen
+- `contacts_snapshot_YYYY-MM-DD.csv`: Contact-Daten mit Company-Assoziationen
+- `companies_snapshot_YYYY-MM-DD.csv`: Company-Daten
+- `owners_YYYY-MM-DD.json`: Owner ID → Name Mapping
 
-| Spalte | Beschreibung |
-|--------|--------------|
-| deal_id | HubSpot Deal-ID |
-| deal_name | Name des Deals |
-| property_name | Geänderte Eigenschaft (dealstage, amount, closedate) |
-| property_value | Wert zu diesem Zeitpunkt |
-| change_timestamp | Zeitpunkt der Änderung |
-| source_type | Quelle der Änderung (CRM_UI, API, etc.) |
-| change_order | Chronologische Reihenfolge |
+#### CSV Reports (`output/reports/`)
 
-#### 3. `data_quality_issues_YYYY-MM-DD.csv` (optional)
-
-Liste aller Datenqualitätsprobleme (fehlende Namen, Beträge, etc.)
+- `kpi_overview_YYYY-MM-DD.csv`: Monatliche KPI-Zusammenfassung
+- `deal_movements_detail_YYYY-MM-DD.csv`: Deal-by-Deal Bewegungslog
+- `contacts_kpi_YYYY-MM-DD.csv`: Contact-Funnel KPIs
+- `sql_details_YYYY-MM-DD.csv`: SQL Details letzter Monat
+- `source_breakdown_YYYY-MM-DD.csv`: Lead-Quellen Matrix
 
 ### Fortschritt überwachen
 
@@ -132,20 +168,52 @@ Alle Einstellungen können in der `.env` Datei angepasst werden:
 | RATE_LIMIT_DELAY | Verzögerung zwischen API-Aufrufen (Sekunden) | 0.11 |
 | MAX_RETRIES | Maximale Anzahl Wiederholungen bei Fehlern | 3 |
 
-## Features
+## Schlüssel-Features
 
-### Rate Limiting
+### Historische HubSpot-Wahrscheinlichkeiten
 
-Das Skript respektiert die HubSpot API Rate Limits:
-- 110ms Pause zwischen Requests (sicher unter dem Limit von 100 Requests/10 Sekunden)
-- Automatische Wiederholung bei Rate-Limit-Fehlern mit exponentiellem Backoff
+Das System verwendet **echte HubSpot Forecast-Wahrscheinlichkeiten** aus der Deal-History statt fixer Phasen-basierter Schätzungen:
 
-### Checkpoint-System
+**Funktionsweise:**
+1. Lädt `deal_history_*.csv` mit allen `hs_deal_stage_probability` Änderungen
+2. Berechnet für jeden Monatsvergleich den Monatsende-Zeitstempel (z.B. 31. Dez, 23:59:59 UTC)
+3. Rekonstruiert Wahrscheinlichkeit für jeden Deal zu diesem spezifischen Zeitpunkt
+4. Erstellt separate `HubSpot_Probability_A` und `HubSpot_Probability_B` Spalten
+5. Verwendet diese historischen Werte für gewichtete Pipeline-Berechnungen
 
-Bei großen Datenmengen speichert das Skript alle 100 Deals einen Checkpoint:
-- Bei Unterbrechung (z.B. Netzwerkfehler): Einfach neu starten, es wird fortgesetzt
-- Checkpoint-Datei: `output/.checkpoint_deals.json`
-- Wird automatisch gelöscht nach erfolgreichem Abschluss
+**Vorteile:**
+- ✅ Genaue historische Forecasts (verwendet tatsächliche Werte von damals)
+- ✅ Erfasst manuelle Wahrscheinlichkeitsanpassungen in HubSpot
+- ✅ Unterschiedliche Wahrscheinlichkeiten für gleiche Phase (z.B. Negotiation: 75% → 90%)
+- ✅ Fallback auf Phasen-basierte Wahrscheinlichkeiten wenn History nicht verfügbar
+
+### Wahrscheinlichkeitsänderungs-Tracking
+
+Status-Spalte zeigt Wahrscheinlichkeitsänderungen > 5% an:
+- Mit Phasenwechsel: `🔵 Qualification → Negotiation (Prob: 20% → 90%)`
+- Ohne Phasenwechsel: `📊 Prob: 50% → 75%`
+
+### Split-PDF-Generierung
+
+Zwei separate PDFs für bessere Organisation:
+- **PDF 1**: Pipeline-Vergleich (schnelle Board-Präsentation)
+- **PDF 2**: Zusatzberichte (detaillierte Analysen)
+- Selektive Generierung mit `--pdf-parts 1|2` für schnellere Iterationen
+
+### Multi-Object Architecture
+
+Config-basiertes System für erweiterbare HubSpot-Objekt-Unterstützung:
+- ✅ Deals (mit Historie und Contact-Enrichment)
+- ✅ Contacts (MQL/SQL Funnel)
+- ✅ Companies (Customer Pipeline)
+- Neue Object-Types in ~10 Minuten hinzufügen
+
+### Rate Limiting & Checkpoint System
+
+- 110ms Pause zwischen Requests (respektiert HubSpot API Limits)
+- Automatische Wiederholung bei Rate-Limit-Fehlern
+- Checkpoint bei großen Datenmengen (automatische Fortsetzung bei Unterbrechung)
+- Object-spezifische Checkpoints (`.checkpoint_deals.json`, `.checkpoint_contacts.json`, etc.)
 
 ### Error Handling
 
@@ -224,26 +292,62 @@ Nach erfolgreicher Datenprüfung:
 
 ```
 dealanalyse/
-├── .env                    # Ihre Konfiguration (nicht committen!)
-├── .env.example           # Konfigurations-Template
-├── .gitignore            # Git-Ignorierungen
-├── requirements.txt      # Python-Dependencies
-├── README.md            # Diese Datei
+├── .env                           # Konfiguration (nicht committen!)
+├── .env.example                   # Konfigurations-Template
+├── requirements.txt               # Python-Dependencies
+├── README.md                      # Diese Datei
+├── CLAUDE.md                      # Detaillierte Entwickler-Dokumentation
+│
+├── generate_report.py             # Haupt-Pipeline (Fetch + Analyze + PDF)
+├── dashboard_monthly.py           # Streamlit Dashboard
+├── fetch_deals.py                 # Legacy Deal-Fetcher
+├── fetch_contacts.py              # Legacy Contact-Fetcher
+├── analyze_deals.py               # Legacy Deal-Analyzer
+├── analyze_contacts.py            # Legacy Contact-Analyzer
+├── demo_phase2_architecture.py    # Architecture Demo
+│
+├── config/
+│   ├── object_types.json          # Object Type Definitions (Deals, Contacts, Companies)
+│   ├── report_definitions.json    # Report Configurations
+│   └── stage_mapping.json         # Pipeline Stage Mappings
 │
 ├── src/
-│   ├── __init__.py
-│   ├── config.py         # Konfigurationsmanagement
-│   ├── hubspot_client.py # HubSpot API-Client
-│   ├── data_fetcher.py   # Daten-Orchestrierung
-│   └── csv_writer.py     # CSV-Export
+│   ├── core/                      # Core Framework (Phase 1 & 2)
+│   │   ├── object_registry.py     # Object Type Registry
+│   │   ├── checkpoint_manager.py  # Generic Checkpoint System
+│   │   ├── base_fetcher.py        # Abstract Fetcher Base Class
+│   │   └── base_analyzer.py       # Abstract Analyzer Base Class
+│   │
+│   ├── fetchers/                  # Specialized Fetchers
+│   │   ├── deals_fetcher.py       # DealsFetcher with history
+│   │   ├── contacts_fetcher.py    # ContactsFetcher with companies
+│   │   └── companies_fetcher.py   # CompaniesFetcher
+│   │
+│   ├── reporting/                 # Reporting Layer
+│   │   ├── pdf_generator.py       # PDF Generation (2 separate PDFs)
+│   │   └── report_registry.py     # Report Definition Registry
+│   │
+│   ├── analysis/                  # Analysis Modules
+│   │   ├── monthly_analyzer.py    # Monthly Deal State Reconstruction
+│   │   ├── stage_mapper.py        # Stage ID → Name Mapping
+│   │   ├── movement_categorizer.py # Deal Movement Categorization
+│   │   └── deals_2025_analyzer.py # 2025 Deals Overview
+│   │
+│   └── utils/                     # Utilities
+│       └── formatting.py          # German Number/Date Formatting
 │
-├── output/              # CSV-Ausgaben (git-ignoriert)
-│   └── .gitkeep
+├── output/                        # Generated Files (git-ignored)
+│   ├── deals_snapshot_*.csv       # Deal Snapshots
+│   ├── deal_history_*.csv         # Deal History (inkl. hs_deal_stage_probability)
+│   ├── contacts_snapshot_*.csv    # Contact Snapshots
+│   ├── companies_snapshot_*.csv   # Company Snapshots
+│   ├── owners_*.json              # Owner Mappings
+│   └── reports/                   # Generated Reports
+│       ├── 1_pipeline_vergleich_*.pdf
+│       ├── 2_zusatzberichte_*.pdf
+│       └── *.csv                  # CSV Reports
 │
-├── logs/                # Log-Dateien (git-ignoriert)
-│   └── .gitkeep
-│
-└── fetch_deals.py       # Hauptskript
+└── logs/                          # Log Files (git-ignored)
 ```
 
 ## Lizenz
